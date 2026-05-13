@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.White_web" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- 科幻深空风格：深色背景 + 青色霓虹色调 -->
+    <style name="CustomDatePickerTheme" parent="android:Theme.Material.Dialog">
+        <!-- 背景色：深空黑 -->
+        <item name="android:windowBackground">@color/deep_space</item>
+        <!-- 文本主色：霓虹青 -->
+        <item name="android:textColorPrimary">@color/neon_cyan</item>
+        <!-- 按钮文本 -->
+        <item name="android:textColor">@color/neon_cyan</item>
+        <!-- 分割线 -->
+        <item name="android:divider">@color/neon_cyan_dim</item>
+        <!-- 次级文本 -->
+        <item name="android:textColorSecondary">@color/star_white</item>
+        <!-- 强调色（圆圈/指针） -->
+        <item name="android:colorAccent">@color/neon_cyan</item>
+        <!-- 主色 -->
+        <item name="android:colorPrimary">@color/space_navy</item>
+        <!-- 深色主色 -->
+        <item name="android:colorPrimaryDark">@color/deep_space</item>
+    </style>
+
+</resources>

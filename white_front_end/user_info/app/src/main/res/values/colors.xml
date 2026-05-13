@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 主色系 -->
+    <color name="primary">#4A6CF7</color>
+    <color name="primary_light">#E6ECFF</color>
+    <color name="primary_dark">#2541B2</color>
+
+    <!-- 次色系 -->
+    <color name="secondary">#FF9800</color>
+    <color name="secondary_light">#FFF3E0</color>
+    <color name="secondary_dark">#F57C00</color>
+
+    <!-- 基础色 -->
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+    <color name="gold">#FFD700</color>
+    <color name="text_dark">#333333</color>
+    <color name="text_gray">#666666</color>
+    <color name="background">#FFF9F9</color>
+</resources>
