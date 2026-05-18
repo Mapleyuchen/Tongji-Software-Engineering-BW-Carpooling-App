@@ -1063,6 +1063,11 @@ def rate_driver():
     if current_user != order.user1 and current_user != order.user2 and current_user != order.user3 and current_user != order.user4:
         return jsonify({"code": 403, "message": "您不是该订单的参与者"}), 403
 
+    # 必须先完成支付才能对司机评分
+    payment = Payment.query.filter_by(order_id=order_id, passenger_username=current_user).first()
+    if not payment or payment.status != "PAID":
+        return jsonify({"code": 403, "message": "请先完成支付后再评分"}), 403
+
     # 找到司机
     driver_user = User.query.filter_by(username=order.driver).first()
     if not driver_user:
@@ -1619,6 +1624,179 @@ def use_coupon(coupon_id):
     return jsonify({"code": 200, "message": "优惠券使用成功", "data": {"original_amount": order_amount, "discount_amount": discount_amount, "final_amount": final_amount, "coupon_name": coupon.coupon_name}})
 
 
+# ====================== 模拟支付系统 ======================
+# 当前实现为本地模拟支付，未接入真实支付宝/微信 SDK。
+# 业务约束：
+#   1. 只有订单状态为已完成 (status=2) 时，乘客才可发起支付。
+#   2. 同一 (order_id, passenger_username) 只允许一次成功支付。
+#   3. 司机本人不能为自己的订单支付。
+#   4. 必须先支付成功才能调用 /api/order/rate-driver 对司机评分。
+
+class Payment(db.Model):
+    __tablename__ = "payment"
+    payment_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    order_id = db.Column(db.Integer, db.ForeignKey("orders.order_id"), nullable=False)
+    passenger_username = db.Column(db.String(20), db.ForeignKey("user.username"), nullable=False)
+    driver_username = db.Column(db.String(20), db.ForeignKey("user.username"), nullable=False)
+    amount = db.Column(db.Numeric(10, 2), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="UNPAID")  # UNPAID / PAID
+    paid_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.now)
+
+    __table_args__ = (
+        db.UniqueConstraint("order_id", "passenger_username", name="uq_payment_order_passenger"),
+    )
+
+
+# 模拟支付：将订单某位乘客的支付记录置为 PAID
+@app.route("/api/payment/pay", methods=["POST"])
+def pay_order():
+    # 获取请求头中的Token
+    token = request.headers.get("Authorization")
+    if not token:
+        return jsonify({"code": 401, "message": "Token缺失"}), 401
+
+    # 检查Token的有效性
+    check_result = check_token(token)
+    if check_result:
+        return check_result
+
+    payload = jwt.decode(token, "secret_key", algorithms=["HS256"])
+    current_user = payload["username"]
+
+    data = request.json or {}
+    order_id = data.get("order_id")
+    amount = data.get("amount")
+
+    if order_id is None or amount is None:
+        return jsonify({"code": 400, "message": "order_id 或 amount 缺失"}), 400
+
+    # 校验金额是数字且大于 0
+    try:
+        amount_value = float(amount)
+    except (TypeError, ValueError):
+        return jsonify({"code": 400, "message": "支付金额必须是数字"}), 400
+    if amount_value <= 0:
+        return jsonify({"code": 400, "message": "支付金额必须大于0"}), 400
+
+    # 订单必须存在
+    order = Order.query.get_or_404(order_id)
+
+    # 订单必须已完成
+    order_status = OrderStatus.query.filter_by(order_id=order_id).first()
+    if not order_status:
+        return jsonify({"code": 404, "message": "订单状态不存在"}), 404
+    if order_status.status != 2:
+        return jsonify({"code": 400, "message": "订单尚未完成，无法支付"}), 400
+
+    # 必须存在司机
+    if not order.driver:
+        return jsonify({"code": 400, "message": "订单暂无司机，无需支付"}), 400
+
+    # 当前用户必须是该订单的乘客之一
+    if current_user not in [order.user1, order.user2, order.user3, order.user4]:
+        return jsonify({"code": 403, "message": "您不是该订单的乘客"}), 403
+
+    # 司机本人不能为自己支付
+    if current_user == order.driver:
+        return jsonify({"code": 403, "message": "司机不能为自己支付"}), 403
+
+    # 同一乘客对同一订单不允许重复支付
+    payment = Payment.query.filter_by(order_id=order_id, passenger_username=current_user).first()
+    if payment and payment.status == "PAID":
+        return jsonify({"code": 409, "message": "您已完成支付，请勿重复支付"}), 409
+
+    now = datetime.datetime.now()
+    if payment is None:
+        payment = Payment(
+            order_id=order_id,
+            passenger_username=current_user,
+            driver_username=order.driver,
+            amount=amount_value,
+            status="PAID",
+            paid_at=now,
+        )
+        db.session.add(payment)
+    else:
+        # 之前存在 UNPAID 占位记录，复用同一行更新为 PAID
+        payment.amount = amount_value
+        payment.driver_username = order.driver
+        payment.status = "PAID"
+        payment.paid_at = now
+
+    db.session.commit()
+
+    return jsonify({
+        "code": 200,
+        "message": "支付成功",
+        "data": {
+            "payment_id": payment.payment_id,
+            "order_id": payment.order_id,
+            "passenger_username": payment.passenger_username,
+            "driver_username": payment.driver_username,
+            "amount": float(payment.amount),
+            "status": payment.status,
+            "paid_at": payment.paid_at.isoformat() if payment.paid_at else None,
+        },
+    })
+
+
+# 查询当前用户对某订单的支付状态
+@app.route("/api/payment/status", methods=["POST"])
+def payment_status():
+    # 获取请求头中的Token
+    token = request.headers.get("Authorization")
+    if not token:
+        return jsonify({"code": 401, "message": "Token缺失"}), 401
+
+    # 检查Token的有效性
+    check_result = check_token(token)
+    if check_result:
+        return check_result
+
+    payload = jwt.decode(token, "secret_key", algorithms=["HS256"])
+    current_user = payload["username"]
+
+    data = request.json or {}
+    order_id = data.get("order_id")
+
+    if order_id is None:
+        return jsonify({"code": 400, "message": "order_id 缺失"}), 400
+
+    payment = Payment.query.filter_by(order_id=order_id, passenger_username=current_user).first()
+    if not payment:
+        return jsonify({
+            "code": 200,
+            "message": "查询成功",
+            "data": {
+                "order_id": order_id,
+                "has_paid": False,
+                "status": "UNPAID",
+                "amount": None,
+                "paid_at": None,
+            },
+        })
+
+    return jsonify({
+        "code": 200,
+        "message": "查询成功",
+        "data": {
+            "order_id": payment.order_id,
+            "has_paid": payment.status == "PAID",
+            "status": payment.status,
+            "amount": float(payment.amount) if payment.amount is not None else None,
+            "paid_at": payment.paid_at.isoformat() if payment.paid_at else None,
+        },
+    })
+
+
+def init_db():
+    # Run after all db.Model classes are defined so every table is registered.
+    with app.app_context():
+        db.create_all()
+
+
 if __name__ == '__main__':
+    init_db()
     app.run(debug=True, port=8443, use_reloader=False)
     # app.run(host='0.0.0.0', port=8443, debug=False)

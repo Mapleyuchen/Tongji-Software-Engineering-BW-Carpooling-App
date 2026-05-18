@@ -122,6 +122,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.navigation.NavHostController
 import com.example.white_web.APISERVICCE
 import com.example.white_web.CheckUserRatingRequest
+import com.example.white_web.PaymentRequest
+import com.example.white_web.PaymentStatusRequest
 import com.example.white_web.USERNAME
 import com.example.white_web.map.GDMapPath
 import com.example.white_web.ui.theme.White_webTheme
@@ -265,6 +267,20 @@ class CurrentOrdersViewModel : ViewModel() {
     // 添加到ViewModel中
     private val _hasRated = MutableStateFlow(false)
     val hasRated = _hasRated.asStateFlow()
+
+    // ---------------- 支付相关状态 ----------------
+
+    // 当前用户对当前订单是否已支付
+    private val _hasPaid = MutableStateFlow(false)
+    val hasPaid = _hasPaid.asStateFlow()
+
+    // 已支付金额（仅在 hasPaid 为 true 时有意义）
+    private val _paymentAmount = MutableStateFlow<Double?>(null)
+    val paymentAmount = _paymentAmount.asStateFlow()
+
+    // 支付请求是否正在进行中
+    private val _paying = MutableStateFlow(false)
+    val paying = _paying.asStateFlow()
 
     // 初始化时获取当前订单
     init {
@@ -459,6 +475,59 @@ class CurrentOrdersViewModel : ViewModel() {
                 _error.value = "网络请求错误: ${e.message}"
             } finally {
                 _isLoading.value = false
+            }
+        }
+    }
+
+    // ---------------- 模拟支付 ----------------
+
+    /**
+     * 查询当前用户对该订单的支付状态。
+     * 失败时静默回退到 hasPaid=false，避免阻断 UI。
+     */
+    fun fetchPaymentStatus(orderId: Int) {
+        viewModelScope.launch {
+            try {
+                val response = APISERVICCE.getPaymentStatus(
+                    request = PaymentStatusRequest(orderId = orderId)
+                )
+                if (response.isSuccessful && response.body()?.code == 200) {
+                    val data = response.body()?.data
+                    _hasPaid.value = data?.hasPaid ?: false
+                    _paymentAmount.value = data?.amount
+                } else {
+                    _hasPaid.value = false
+                }
+            } catch (e: Exception) {
+                _hasPaid.value = false
+            }
+        }
+    }
+
+    /**
+     * 发起模拟支付。支付成功后将 hasPaid 置为 true，并保留实际成交金额。
+     * 失败时把 message 写入 _error，UI 会通过错误分支提示。
+     */
+    fun payOrder(orderId: Int, amount: Double) {
+        viewModelScope.launch {
+            _paying.value = true
+            _error.value = null
+            try {
+                val response = APISERVICCE.payOrder(
+                    request = PaymentRequest(orderId = orderId, amount = amount)
+                )
+                if (response.isSuccessful && response.body()?.code == 200) {
+                    _hasPaid.value = true
+                    _paymentAmount.value = response.body()?.data?.amount ?: amount
+                } else {
+                    _error.value = response.body()?.message ?: "支付失败"
+                    // 失败后再次同步一次后端真实状态，避免本地状态错位
+                    fetchPaymentStatus(orderId)
+                }
+            } catch (e: Exception) {
+                _error.value = "网络请求错误: ${e.message}"
+            } finally {
+                _paying.value = false
             }
         }
     }
@@ -679,12 +748,17 @@ fun OrderDetailContent(
     // 添加hasRated状态
     val hasRated by viewModel.hasRated.collectAsState()
 
+    // 模拟支付相关状态
+    val hasPaid by viewModel.hasPaid.collectAsState()
+    val paying by viewModel.paying.collectAsState()
+
     // 判断当前用户是否为司机
     val isDriver = currentOrder.order.driver == currentUsername
 
-    // 添加检查用户是否已评分的效果
+    // 进入已完成订单页面时，乘客需要先查支付状态再判断是否已评分
     LaunchedEffect(currentOrder.order.orderId, currentOrder.status.status) {
         if (currentOrder.status.status == 2 && !isDriver && currentOrder.order.driver != null) {
+            viewModel.fetchPaymentStatus(currentOrder.order.orderId)
             viewModel.checkIfUserHasRated(currentOrder.order.orderId, currentOrder.order.driver)
         }
     }
@@ -895,6 +969,12 @@ fun OrderDetailContent(
         ) {
             HorizontalDivider(modifier = Modifier.padding(bottom = 16.dp), color = GlowCyan30)
 
+            // 从 calculatedPrice (形如 "13元") 解析出整数金额，传给支付按钮
+            val paymentAmountInt = calculatedPrice
+                .replace("元", "")
+                .trim()
+                .toIntOrNull() ?: 0
+
             // 按钮区域
             ActionButtons(
                 orderStatus = currentOrder.status.status,
@@ -909,7 +989,16 @@ fun OrderDetailContent(
                     )
                 },
                 onStartTrip = { viewModel.startTrip(currentOrder.order.orderId) },
-                allPassengersArrived = allPassengersArrived
+                allPassengersArrived = allPassengersArrived,
+                hasPaid = hasPaid,
+                paying = paying,
+                paymentAmount = paymentAmountInt,
+                onPay = {
+                    viewModel.payOrder(
+                        currentOrder.order.orderId,
+                        paymentAmountInt.toDouble()
+                    )
+                }
             )
         }
     }
@@ -1188,7 +1277,12 @@ fun ActionButtons(
     onConfirmArrival: () -> Unit,
     onConfirmDestination: () -> Unit,
     onStartTrip: () -> Unit = {},
-    allPassengersArrived: Boolean = false
+    allPassengersArrived: Boolean = false,
+    // 模拟支付相关参数（默认值保证旧调用方/旧 Preview 不报错）
+    hasPaid: Boolean = false,
+    paying: Boolean = false,
+    paymentAmount: Int = 0,
+    onPay: () -> Unit = {}
 ) {
     when (orderStatus) {
         0 -> {
@@ -1282,23 +1376,68 @@ fun ActionButtons(
         }
 
         2 -> {
-            if (isDriver) {
-                Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(disabledContainerColor = Color(0xFFECE0D6))) {
-                    Text("订单已完成", color = NeonGreen)
+            when {
+                // 司机视角：行程已结束，无需支付/评分
+                isDriver -> {
+                    Button(
+                        onClick = {},
+                        enabled = false,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            disabledContainerColor = Color(0xFFECE0D6)
+                        )
+                    ) {
+                        Text("订单已完成", color = NeonGreen)
+                    }
                 }
-            } else if (hasRated) {
-                Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(disabledContainerColor = Color(0xFFECE0D6))) {
-                    Text("您已完成评分，感谢反馈", color = NeonGreen)
+                // 乘客视角：未支付 → 显示支付按钮
+                !hasPaid -> {
+                    Button(
+                        onClick = onPay,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !paying && paymentAmount > 0,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = NeonPurple,
+                            disabledContainerColor = Color(0xFFECE0D6)
+                        )
+                    ) {
+                        Text(
+                            text = when {
+                                paying -> "支付中..."
+                                paymentAmount <= 0 -> "金额计算中..."
+                                else -> "待支付 ¥${paymentAmount}，点击支付"
+                            },
+                            modifier = Modifier.padding(8.dp),
+                            color = if (paying || paymentAmount <= 0) Color(0xFF8B6A50) else StarWhite
+                        )
+                    }
                 }
-            } else {
-                Button(
-                    onClick = onConfirmDestination,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = NeonPurple)
-                ) {
-                    Text("订单已完成 — 点击评价司机", color = StarWhite)
+                // 乘客视角：已支付但未评分 → 显示评分入口
+                !hasRated -> {
+                    Button(
+                        onClick = onConfirmDestination,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = NeonBlue)
+                    ) {
+                        Text(
+                            text = "已支付，点击评价司机",
+                            modifier = Modifier.padding(8.dp),
+                            color = StarWhite
+                        )
+                    }
+                }
+                // 乘客视角：已支付且已评分 → 终态
+                else -> {
+                    Button(
+                        onClick = {},
+                        enabled = false,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            disabledContainerColor = Color(0xFFECE0D6)
+                        )
+                    ) {
+                        Text("您已完成支付和评分", color = NeonGreen)
+                    }
                 }
             }
         }
@@ -1547,6 +1686,82 @@ fun ActionButtonsInProgressPreview() {
             hasRated = false,
             onConfirmArrival = {},
             onConfirmDestination = {}
+        )
+    }
+}
+
+// 操作按钮预览 - 已完成 + 司机视角
+@Preview
+@Composable
+fun ActionButtonsCompletedDriverPreview() {
+    White_webTheme {
+        ActionButtons(
+            orderStatus = 2,
+            isCurrentUserArrived = true,
+            isDriver = true,
+            hasRated = false,
+            onConfirmArrival = {},
+            onConfirmDestination = {}
+        )
+    }
+}
+
+// 操作按钮预览 - 已完成 + 乘客 + 未支付
+@Preview
+@Composable
+fun ActionButtonsCompletedUnpaidPreview() {
+    White_webTheme {
+        ActionButtons(
+            orderStatus = 2,
+            isCurrentUserArrived = true,
+            isDriver = false,
+            hasRated = false,
+            onConfirmArrival = {},
+            onConfirmDestination = {},
+            hasPaid = false,
+            paying = false,
+            paymentAmount = 13,
+            onPay = {}
+        )
+    }
+}
+
+// 操作按钮预览 - 已完成 + 乘客 + 已支付未评分
+@Preview
+@Composable
+fun ActionButtonsCompletedPaidUnratedPreview() {
+    White_webTheme {
+        ActionButtons(
+            orderStatus = 2,
+            isCurrentUserArrived = true,
+            isDriver = false,
+            hasRated = false,
+            onConfirmArrival = {},
+            onConfirmDestination = {},
+            hasPaid = true,
+            paying = false,
+            paymentAmount = 13,
+            onPay = {}
+        )
+    }
+}
+
+// 操作按钮预览 - 已完成 + 乘客 + 已支付且已评分
+@Preview
+@Composable
+fun ActionButtonsCompletedFinishedPreview() {
+    White_webTheme {
+        ActionButtons(
+            orderStatus = 2,
+            isCurrentUserArrived = true,
+            isDriver = false,
+            hasRated = true,
+            onConfirmArrival = {},
+            onConfirmDestination = {},
+            hasPaid = true,
+            paying = false,
+            paymentAmount = 13,
+            onPay = {}
         )
     }
 }

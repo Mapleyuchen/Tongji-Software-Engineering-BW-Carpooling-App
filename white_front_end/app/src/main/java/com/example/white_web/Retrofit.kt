@@ -250,6 +250,56 @@ data class CouponUseData(
     val couponName: String
 )
 
+// 支付相关数据类（模拟支付系统）
+data class PaymentRequest(
+    @SerializedName("order_id")
+    val orderId: Int,
+    val amount: Double
+)
+
+data class PaymentStatusRequest(
+    @SerializedName("order_id")
+    val orderId: Int
+)
+
+data class PaymentResponse(
+    val code: Int,
+    val message: String,
+    val data: PaymentData?
+)
+
+data class PaymentStatusResponse(
+    val code: Int,
+    val message: String,
+    val data: PaymentStatusData?
+)
+
+data class PaymentData(
+    @SerializedName("payment_id")
+    val paymentId: Int,
+    @SerializedName("order_id")
+    val orderId: Int,
+    @SerializedName("passenger_username")
+    val passengerUsername: String,
+    @SerializedName("driver_username")
+    val driverUsername: String,
+    val amount: Double,
+    val status: String,
+    @SerializedName("paid_at")
+    val paidAt: String?
+)
+
+data class PaymentStatusData(
+    @SerializedName("order_id")
+    val orderId: Int,
+    @SerializedName("has_paid")
+    val hasPaid: Boolean,
+    val status: String,
+    val amount: Double?,
+    @SerializedName("paid_at")
+    val paidAt: String?
+)
+
 interface ApiService {
     @POST("/api/login")
     suspend fun login(@Body request: LoginRequest): Response<LoginResponse>
@@ -385,6 +435,19 @@ interface ApiService {
         @Header("Authorization") token: String? = TOKEN,
         @Body request: CouponUseRequest
     ): Response<CouponUseResponse>
+
+    // 模拟支付接口
+    @POST("/api/payment/pay")
+    suspend fun payOrder(
+        @Header("Authorization") token: String? = TOKEN,
+        @Body request: PaymentRequest
+    ): Response<PaymentResponse>
+
+    @POST("/api/payment/status")
+    suspend fun getPaymentStatus(
+        @Header("Authorization") token: String? = TOKEN,
+        @Body request: PaymentStatusRequest
+    ): Response<PaymentStatusResponse>
 }
 
 val APISERVICCE = retrofit.create(ApiService::class.java)
