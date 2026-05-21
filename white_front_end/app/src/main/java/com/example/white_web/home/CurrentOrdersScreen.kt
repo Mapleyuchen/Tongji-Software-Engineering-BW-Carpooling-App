@@ -54,6 +54,8 @@ package com.example.white_web.home
 // 导入Compose和相关依赖
 import PosDetail
 import android.annotation.SuppressLint
+import android.content.Intent
+import android.net.Uri
 import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -122,6 +124,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.navigation.NavHostController
 import com.example.white_web.APISERVICCE
 import com.example.white_web.CheckUserRatingRequest
+import com.example.white_web.PaymentQueryRequest
 import com.example.white_web.PaymentRequest
 import com.example.white_web.PaymentStatusRequest
 import com.example.white_web.USERNAME
@@ -268,19 +271,28 @@ class CurrentOrdersViewModel : ViewModel() {
     private val _hasRated = MutableStateFlow(false)
     val hasRated = _hasRated.asStateFlow()
 
-    // ---------------- 支付相关状态 ----------------
+    // ---------------- 支付相关状态（支付宝沙箱）----------------
 
     // 当前用户对当前订单是否已支付
     private val _hasPaid = MutableStateFlow(false)
     val hasPaid = _hasPaid.asStateFlow()
 
-    // 已支付金额（仅在 hasPaid 为 true 时有意义）
+    // 已支付/正在支付的金额（CREATED 时即为预期支付金额，PAID 后是真实成交金额）
     private val _paymentAmount = MutableStateFlow<Double?>(null)
     val paymentAmount = _paymentAmount.asStateFlow()
 
-    // 支付请求是否正在进行中
+    // 创建支付订单 / 查询接口正在请求中
     private val _paying = MutableStateFlow(false)
     val paying = _paying.asStateFlow()
+
+    // 后端最新返回的支付状态：UNPAID / CREATED / PENDING / PAID / FAILED / CLOSED
+    private val _paymentStatus = MutableStateFlow<String?>(null)
+    val paymentStatus = _paymentStatus.asStateFlow()
+
+    // 待 UI 消费的支付宝跳转 URL；非空时 UI 用 Intent 打开浏览器，
+    // 打开后调用 consumePayUrl() 置 null 避免重复跳转
+    private val _payUrl = MutableStateFlow<String?>(null)
+    val payUrl = _payUrl.asStateFlow()
 
     // 初始化时获取当前订单
     init {
@@ -479,11 +491,11 @@ class CurrentOrdersViewModel : ViewModel() {
         }
     }
 
-    // ---------------- 模拟支付 ----------------
+    // ---------------- 支付宝沙箱支付 ----------------
 
     /**
-     * 查询当前用户对该订单的支付状态。
-     * 失败时静默回退到 hasPaid=false，避免阻断 UI。
+     * 拉取后端本地已存的支付状态（不会主动调用支付宝接口）。
+     * 失败时静默回退，避免阻断 UI。
      */
     fun fetchPaymentStatus(orderId: Int) {
         viewModelScope.launch {
@@ -494,19 +506,24 @@ class CurrentOrdersViewModel : ViewModel() {
                 if (response.isSuccessful && response.body()?.code == 200) {
                     val data = response.body()?.data
                     _hasPaid.value = data?.hasPaid ?: false
-                    _paymentAmount.value = data?.amount
+                    _paymentAmount.value = data?.amount ?: _paymentAmount.value
+                    _paymentStatus.value = data?.status
                 } else {
                     _hasPaid.value = false
+                    _paymentStatus.value = null
                 }
             } catch (e: Exception) {
                 _hasPaid.value = false
+                _paymentStatus.value = null
             }
         }
     }
 
     /**
-     * 发起模拟支付。支付成功后将 hasPaid 置为 true，并保留实际成交金额。
-     * 失败时把 message 写入 _error，UI 会通过错误分支提示。
+     * 创建支付宝沙箱支付订单。
+     * 成功后会拿到 pay_url，写入 _payUrl 由 UI 唤起浏览器打开。
+     * 注意：此处不再把 hasPaid 置 true —— 真正的成功要等用户在支付宝完成付款
+     * 并经过 queryPayment() 或异步通知确认。
      */
     fun payOrder(orderId: Int, amount: Double) {
         viewModelScope.launch {
@@ -516,12 +533,20 @@ class CurrentOrdersViewModel : ViewModel() {
                 val response = APISERVICCE.payOrder(
                     request = PaymentRequest(orderId = orderId, amount = amount)
                 )
-                if (response.isSuccessful && response.body()?.code == 200) {
-                    _hasPaid.value = true
-                    _paymentAmount.value = response.body()?.data?.amount ?: amount
+                val body = response.body()
+                if (response.isSuccessful && body?.code == 200) {
+                    val data = body.data
+                    _paymentStatus.value = data?.status ?: "CREATED"
+                    _paymentAmount.value = data?.amount ?: amount
+                    _hasPaid.value = data?.hasPaid ?: false
+                    val url = data?.payUrl
+                    if (!url.isNullOrBlank()) {
+                        _payUrl.value = url
+                    } else {
+                        _error.value = "未获取到支付链接，请稍后重试"
+                    }
                 } else {
-                    _error.value = response.body()?.message ?: "支付失败"
-                    // 失败后再次同步一次后端真实状态，避免本地状态错位
+                    _error.value = body?.message ?: "创建支付订单失败"
                     fetchPaymentStatus(orderId)
                 }
             } catch (e: Exception) {
@@ -530,6 +555,40 @@ class CurrentOrdersViewModel : ViewModel() {
                 _paying.value = false
             }
         }
+    }
+
+    /**
+     * 主动调用后端 /api/payment/query，让后端去问支付宝交易结果，
+     * 并把本地 Payment 同步刷新。用户从支付宝返回 App 时调用。
+     */
+    fun queryPayment(orderId: Int) {
+        viewModelScope.launch {
+            _paying.value = true
+            try {
+                val response = APISERVICCE.queryPayment(
+                    request = PaymentQueryRequest(orderId = orderId)
+                )
+                val body = response.body()
+                if (response.isSuccessful && body?.code == 200) {
+                    val data = body.data
+                    _paymentStatus.value = data?.status
+                    _hasPaid.value = data?.hasPaid ?: (data?.status == "PAID")
+                    data?.amount?.let { _paymentAmount.value = it }
+                } else {
+                    // 查询失败不覆盖已有状态，只把 message 暴露出去
+                    _error.value = body?.message ?: "查询支付状态失败"
+                }
+            } catch (e: Exception) {
+                _error.value = "网络请求错误: ${e.message}"
+            } finally {
+                _paying.value = false
+            }
+        }
+    }
+
+    /** UI 启动浏览器跳转后调用，清空 _payUrl 避免重复弹出。*/
+    fun consumePayUrl() {
+        _payUrl.value = null
     }
 }
 
@@ -748,9 +807,11 @@ fun OrderDetailContent(
     // 添加hasRated状态
     val hasRated by viewModel.hasRated.collectAsState()
 
-    // 模拟支付相关状态
+    // 支付宝沙箱支付相关状态
     val hasPaid by viewModel.hasPaid.collectAsState()
     val paying by viewModel.paying.collectAsState()
+    val paymentStatus by viewModel.paymentStatus.collectAsState()
+    val payUrl by viewModel.payUrl.collectAsState()
 
     // 判断当前用户是否为司机
     val isDriver = currentOrder.order.driver == currentUsername
@@ -760,6 +821,25 @@ fun OrderDetailContent(
         if (currentOrder.status.status == 2 && !isDriver && currentOrder.order.driver != null) {
             viewModel.fetchPaymentStatus(currentOrder.order.orderId)
             viewModel.checkIfUserHasRated(currentOrder.order.orderId, currentOrder.order.driver)
+        }
+    }
+
+    // 监听支付链接：拿到 pay_url 后立刻用 Intent 打开浏览器跳支付宝沙箱，
+    // 然后 consumePayUrl() 清空避免重复弹出
+    val payContext = LocalContext.current
+    LaunchedEffect(payUrl) {
+        val url = payUrl
+        if (!url.isNullOrBlank()) {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                payContext.startActivity(intent)
+            } catch (e: Exception) {
+                Log.e("CurrentOrdersScreen", "打开支付链接失败", e)
+            } finally {
+                viewModel.consumePayUrl()
+            }
         }
     }
 
@@ -993,11 +1073,15 @@ fun OrderDetailContent(
                 hasPaid = hasPaid,
                 paying = paying,
                 paymentAmount = paymentAmountInt,
+                paymentStatus = paymentStatus,
                 onPay = {
                     viewModel.payOrder(
                         currentOrder.order.orderId,
                         paymentAmountInt.toDouble()
                     )
+                },
+                onRefreshPayment = {
+                    viewModel.queryPayment(currentOrder.order.orderId)
                 }
             )
         }
@@ -1278,11 +1362,15 @@ fun ActionButtons(
     onConfirmDestination: () -> Unit,
     onStartTrip: () -> Unit = {},
     allPassengersArrived: Boolean = false,
-    // 模拟支付相关参数（默认值保证旧调用方/旧 Preview 不报错）
+    // 支付宝沙箱支付相关参数（默认值保证旧调用方/旧 Preview 不报错）
     hasPaid: Boolean = false,
     paying: Boolean = false,
     paymentAmount: Int = 0,
-    onPay: () -> Unit = {}
+    // 当前订单的后端最新支付状态：UNPAID / CREATED / PENDING / PAID / FAILED / CLOSED
+    paymentStatus: String? = null,
+    onPay: () -> Unit = {},
+    // 用户点击"已发起支付，点此刷新"时调用，触发后端主动查询支付宝交易状态
+    onRefreshPayment: () -> Unit = {}
 ) {
     when (orderStatus) {
         0 -> {
@@ -1390,26 +1478,41 @@ fun ActionButtons(
                         Text("订单已完成", color = NeonGreen)
                     }
                 }
-                // 乘客视角：未支付 → 显示支付按钮
+                // 乘客视角：未支付。根据 paymentStatus 给出不同文案。
                 !hasPaid -> {
-                    Button(
-                        onClick = onPay,
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !paying && paymentAmount > 0,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = NeonPurple,
-                            disabledContainerColor = Color(0xFFECE0D6)
-                        )
-                    ) {
-                        Text(
-                            text = when {
-                                paying -> "支付中..."
-                                paymentAmount <= 0 -> "金额计算中..."
-                                else -> "待支付 ¥${paymentAmount}，点击支付"
-                            },
-                            modifier = Modifier.padding(8.dp),
-                            color = if (paying || paymentAmount <= 0) Color(0xFF8B6A50) else StarWhite
-                        )
+                    val isAwaiting = paymentStatus == "CREATED" || paymentStatus == "PENDING"
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Button(
+                            onClick = if (isAwaiting) onRefreshPayment else onPay,
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !paying && paymentAmount > 0,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isAwaiting) NeonBlue else NeonPurple,
+                                disabledContainerColor = Color(0xFFECE0D6)
+                            )
+                        ) {
+                            Text(
+                                text = when {
+                                    paying && isAwaiting -> "查询支付结果中..."
+                                    paying -> "正在创建支付订单..."
+                                    paymentAmount <= 0 -> "金额计算中..."
+                                    isAwaiting -> "已发起支付 ¥${paymentAmount}，点此刷新"
+                                    paymentStatus == "FAILED" -> "上次支付失败，点击重新支付 ¥${paymentAmount}"
+                                    paymentStatus == "CLOSED" -> "支付已关闭，点击重新支付 ¥${paymentAmount}"
+                                    else -> "待支付 ¥${paymentAmount}，点击支付"
+                                },
+                                modifier = Modifier.padding(8.dp),
+                                color = if (paying || paymentAmount <= 0) Color(0xFF8B6A50) else StarWhite
+                            )
+                        }
+                        if (isAwaiting) {
+                            Text(
+                                text = "请在浏览器/支付宝沙箱完成付款后回到 App 点击「点此刷新」",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF8B6A50),
+                                modifier = Modifier.padding(top = 4.dp, start = 8.dp)
+                            )
+                        }
                     }
                 }
                 // 乘客视角：已支付但未评分 → 显示评分入口
@@ -1706,7 +1809,7 @@ fun ActionButtonsCompletedDriverPreview() {
     }
 }
 
-// 操作按钮预览 - 已完成 + 乘客 + 未支付
+// 操作按钮预览 - 已完成 + 乘客 + 未支付（CREATED 之前，首次进入页面）
 @Preview
 @Composable
 fun ActionButtonsCompletedUnpaidPreview() {
@@ -1721,7 +1824,30 @@ fun ActionButtonsCompletedUnpaidPreview() {
             hasPaid = false,
             paying = false,
             paymentAmount = 13,
+            paymentStatus = "UNPAID",
             onPay = {}
+        )
+    }
+}
+
+// 操作按钮预览 - 已完成 + 乘客 + 已发起支付宝沙箱支付，等待用户在浏览器完成
+@Preview
+@Composable
+fun ActionButtonsCompletedAwaitingAlipayPreview() {
+    White_webTheme {
+        ActionButtons(
+            orderStatus = 2,
+            isCurrentUserArrived = true,
+            isDriver = false,
+            hasRated = false,
+            onConfirmArrival = {},
+            onConfirmDestination = {},
+            hasPaid = false,
+            paying = false,
+            paymentAmount = 13,
+            paymentStatus = "CREATED",
+            onPay = {},
+            onRefreshPayment = {}
         )
     }
 }
