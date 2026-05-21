@@ -27,7 +27,7 @@ def _load_json_config(path: Path) -> dict:
     except FileNotFoundError as exc:
         raise AlipayConfigError(
             f"支付宝配置文件不存在：{path}。"
-            f"请复制 config/alipay_sandbox.example.json 为 config/{_CONFIG_FILE_NAME} 并填入真实参数。"
+            f"请在 config/{_CONFIG_FILE_NAME} 文件中填入真实参数。"
         ) from exc
     except json.JSONDecodeError as exc:
         raise AlipayConfigError(
