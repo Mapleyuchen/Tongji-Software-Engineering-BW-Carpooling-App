@@ -573,6 +573,12 @@ class CurrentOrdersViewModel : ViewModel() {
                     val data = body.data
                     _paymentStatus.value = data?.status
                     _hasPaid.value = data?.hasPaid ?: (data?.status == "PAID")
+                    if (_hasPaid.value == false) {
+                        val url = data?.payUrl
+                        if (!url.isNullOrBlank()) {
+                            _payUrl.value = url
+                        } 
+                    }
                     data?.amount?.let { _paymentAmount.value = it }
                 } else {
                     // 查询失败不覆盖已有状态，只把 message 暴露出去
