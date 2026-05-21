@@ -15,6 +15,7 @@ from app.models import (
     Vehicle,
 )
 from app.utils.auth import check_token, generate_token
+from app.blueprints.positions import posData
 
 
 users_bp = Blueprint("users", __name__)
