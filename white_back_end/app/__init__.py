@@ -12,10 +12,10 @@ def create_app(config_class=Config):
 
     from app import models  # noqa: F401
     from app.blueprints import register_blueprints
-
+    
     register_blueprints(app)
-
+    
     with app.app_context():
         db.create_all()
-
+    
     return app

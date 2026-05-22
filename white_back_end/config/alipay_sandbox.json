@@ -1,0 +1,8 @@
+{
+  "app_id": "YOUR_SANDBOX_APP_ID",
+  "gateway": "https://openapi-sandbox.dl.alipaydev.com/gateway.do",
+  "app_private_key": "YOUR_APP_PRIVATE_KEY_BASE64_WITHOUT_PEM_HEADERS",
+  "alipay_public_key": "YOUR_ALIPAY_PUBLIC_KEY_BASE64_WITHOUT_PEM_HEADERS",
+  "return_url": "",
+  "notify_url": ""
+}

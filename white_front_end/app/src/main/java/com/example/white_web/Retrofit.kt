@@ -250,6 +250,81 @@ data class CouponUseData(
     val couponName: String
 )
 
+// 支付相关数据类（支付宝沙箱支付系统）
+data class PaymentRequest(
+    @SerializedName("order_id")
+    val orderId: Int,
+    val amount: Double
+)
+
+data class PaymentStatusRequest(
+    @SerializedName("order_id")
+    val orderId: Int
+)
+
+// 主动查询支付宝交易状态：order_id 或 out_trade_no 至少给一个
+data class PaymentQueryRequest(
+    @SerializedName("order_id")
+    val orderId: Int? = null,
+    @SerializedName("out_trade_no")
+    val outTradeNo: String? = null
+)
+
+data class PaymentResponse(
+    val code: Int,
+    val message: String,
+    val data: PaymentData?
+)
+
+data class PaymentStatusResponse(
+    val code: Int,
+    val message: String,
+    val data: PaymentStatusData?
+)
+
+// 创建支付订单 / 查交易接口返回结构
+data class PaymentData(
+    @SerializedName("payment_id")
+    val paymentId: Int? = null,
+    @SerializedName("order_id")
+    val orderId: Int,
+    @SerializedName("passenger_username")
+    val passengerUsername: String? = null,
+    @SerializedName("driver_username")
+    val driverUsername: String? = null,
+    val amount: Double? = null,
+    // CREATED / PENDING / PAID / FAILED / CLOSED（兼容旧 UNPAID）
+    val status: String,
+    @SerializedName("has_paid")
+    val hasPaid: Boolean = false,
+    @SerializedName("out_trade_no")
+    val outTradeNo: String? = null,
+    @SerializedName("alipay_trade_no")
+    val alipayTradeNo: String? = null,
+    @SerializedName("pay_url")
+    val payUrl: String? = null,
+    @SerializedName("paid_at")
+    val paidAt: String? = null
+)
+
+// /api/payment/status 返回结构（与 PaymentData 大部分字段一致，仍单列以保持兼容）
+data class PaymentStatusData(
+    @SerializedName("order_id")
+    val orderId: Int,
+    @SerializedName("has_paid")
+    val hasPaid: Boolean,
+    val status: String,
+    val amount: Double?,
+    @SerializedName("out_trade_no")
+    val outTradeNo: String? = null,
+    @SerializedName("alipay_trade_no")
+    val alipayTradeNo: String? = null,
+    @SerializedName("pay_url")
+    val payUrl: String? = null,
+    @SerializedName("paid_at")
+    val paidAt: String?
+)
+
 interface ApiService {
     @POST("/api/login")
     suspend fun login(@Body request: LoginRequest): Response<LoginResponse>
@@ -385,6 +460,27 @@ interface ApiService {
         @Header("Authorization") token: String? = TOKEN,
         @Body request: CouponUseRequest
     ): Response<CouponUseResponse>
+
+    // 支付宝沙箱支付：创建支付订单（返回 pay_url）
+    @POST("/api/payment/pay")
+    suspend fun payOrder(
+        @Header("Authorization") token: String? = TOKEN,
+        @Body request: PaymentRequest
+    ): Response<PaymentResponse>
+
+    // 查询本地支付状态（不主动调支付宝）
+    @POST("/api/payment/status")
+    suspend fun getPaymentStatus(
+        @Header("Authorization") token: String? = TOKEN,
+        @Body request: PaymentStatusRequest
+    ): Response<PaymentStatusResponse>
+
+    // 主动查询支付宝交易状态并同步本地（返回结构同 PaymentResponse）
+    @POST("/api/payment/query")
+    suspend fun queryPayment(
+        @Header("Authorization") token: String? = TOKEN,
+        @Body request: PaymentQueryRequest
+    ): Response<PaymentResponse>
 }
 
 val APISERVICCE = retrofit.create(ApiService::class.java)
