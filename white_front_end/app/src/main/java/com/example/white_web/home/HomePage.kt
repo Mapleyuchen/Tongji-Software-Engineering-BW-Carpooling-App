@@ -41,6 +41,7 @@
 package com.example.white_web.home
 
 import PosDetail
+import android.content.Context
 import android.annotation.SuppressLint
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
@@ -140,6 +141,8 @@ import androidx.navigation.NavController
 import com.example.white_web.APISERVICCE
 import com.example.white_web.USERTYPE
 import com.example.white_web.map.GDMapMarker
+import com.example.white_web.map.calculateDrivingDistanceMeters
+import com.example.white_web.map.estimateDrivingDistanceMeters
 import com.example.white_web.ui.theme.White_webTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -247,24 +250,15 @@ fun convertOrdersToRideShareItems(response: AllOrdersResponse): List<RideShareIt
         val timeRange =
             formatOrderTime(order.date, order.earliest_departure_time, order.latest_departure_time)
 
-        // 模拟从高德API获取的距离数据（实际使用时替换为真实的距离值）
-        val distanceFromAPI = "从高德API获取距离" // 假设这是从高德API获取的距离，单位：米
-
-        // 计算预期价格 - 使用工具类
-        val expectedPrice = PriceUtils.calculateExpectedPrice(distanceFromAPI)
-
-        // 格式化距离显示（转换为公里）- 使用工具类
-        val distanceDisplay = PriceUtils.formatDistanceDisplay(distanceFromAPI)
-
         RideShareItem(
             id = "${order.order_id}",
             startPoint = order.departure,
             endPoint = order.destination,
-            distance = distanceDisplay,
+            distance = "距离计算中...",
             startTime = timeRange,
             currentPeople = currentPeople,
             targetPeople = 4,  // 假设目标是4人拼车
-            expectedPrice = expectedPrice,  // 使用计算出的价格
+            expectedPrice = "价格计算中...",
             driverName = if (order.driver.isNullOrEmpty()) "司机未接单" else order.driver,  // 司机
             driverRating = if (order.driver.isNullOrEmpty()) 0f else 5.0f,  // 假设默认评分
             carType = if (order.driver.isNullOrEmpty()) "司机无描述" else "舒适型",  // 示例数据
@@ -364,13 +358,27 @@ fun HomePage(
     val isLoading by viewModel.isLoading.collectAsState()
     val posLoading by viewModel.posLoading.collectAsState()
     val error by viewModel.error.collectAsState()
+    val searchItems by viewModel.searchItems.collectAsState()
+
+    LaunchedEffect(posDetails.size, listItems.size, searchItems.size) {
+        if (posDetails.isNotEmpty() && (
+                listItems.any { it.distance == "距离计算中..." } ||
+                    searchItems.any { it.distance == "距离计算中..." }
+                )
+        ) {
+            viewModel.refreshDistances(context.applicationContext)
+        }
+    }
 
     // 创建协程作用域
     val coroutineScope = rememberCoroutineScope()
 
     if (isSearchActive) {
         SearchScreen(
-            navController, viewModel, onClose = {
+            navController = navController,
+            viewModel = viewModel,
+            context = context.applicationContext,
+            onClose = {
                 isSearchActive = false
                 viewModel.clearError() // 关闭搜索时清空错误
             })
@@ -650,7 +658,10 @@ fun Float.toDp(density: androidx.compose.ui.unit.Density) = with(density) { this
 
 @Composable
 fun SearchScreen(
-    navController: NavController? = null, viewModel: HomeViewModel, onClose: () -> Unit
+    navController: NavController? = null,
+    viewModel: HomeViewModel,
+    context: Context? = null,
+    onClose: () -> Unit
 ) {
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -712,7 +723,7 @@ fun SearchScreen(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(
                     onSearch = {
-                        viewModel.searchOrders(queryKeywords)
+                        viewModel.searchOrders(queryKeywords, context)
                         keyboardController?.hide()
                     }),
                 // 输入文字后的删除图标
@@ -741,7 +752,7 @@ fun SearchScreen(
                         // 搜索图标
                         IconButton(
                             onClick = {
-                                viewModel.searchOrders(queryKeywords)
+                                viewModel.searchOrders(queryKeywords, context)
                                 keyboardController?.hide()
                             }) {
                             Box(
@@ -1035,9 +1046,65 @@ class HomeViewModel : ViewModel() {
     private val _isSearching = MutableStateFlow(false)
     val isSearching = _isSearching.asStateFlow()
 
+    private val distanceCache = mutableMapOf<String, Float?>()
+
     init {
         fetchOrders()
         fetchposDetails()
+    }
+
+    fun refreshDistances(context: Context) {
+        val positions = _posDetails.value
+        if (positions.isEmpty()) {
+            return
+        }
+
+        viewModelScope.launch {
+            _orders.value = fillDistanceAndPrice(_orders.value, positions, context)
+            if (_searchOrders.value.isNotEmpty()) {
+                _searchOrders.value = fillDistanceAndPrice(_searchOrders.value, positions, context)
+            }
+        }
+    }
+
+    private suspend fun fillDistanceAndPrice(
+        items: List<RideShareItem>,
+        positions: List<PosDetail>,
+        context: Context
+    ): List<RideShareItem> {
+        val posMap = positions.associateBy { it.name }
+        return items.map { item ->
+            val startPoint = posMap[item.startPoint]
+            val endPoint = posMap[item.endPoint]
+            val cacheKey = "${item.startPoint}->${item.endPoint}"
+            val distanceInMeters = if (startPoint != null && endPoint != null) {
+                if (distanceCache.containsKey(cacheKey)) {
+                    distanceCache[cacheKey]
+                } else {
+                    val calculatedDistance =
+                        calculateDrivingDistanceMeters(context.applicationContext, startPoint, endPoint)
+                            ?: estimateDrivingDistanceMeters(startPoint, endPoint)
+                    distanceCache[cacheKey] = calculatedDistance
+                    calculatedDistance
+                }
+            } else {
+                null
+            }
+
+            if (distanceInMeters != null) {
+                val distanceText = PriceUtils.formatDistanceDisplay(distanceInMeters.toString())
+                val priceText = PriceUtils.calculateExpectedPrice(distanceInMeters.toString())
+                item.copy(
+                    distance = distanceText,
+                    expectedPrice = priceText
+                )
+            } else {
+                item.copy(
+                    distance = "距离计算失败",
+                    expectedPrice = "价格计算失败"
+                )
+            }
+        }
     }
 
     fun fetchOrders() {
@@ -1092,7 +1159,7 @@ class HomeViewModel : ViewModel() {
         }
     }
 
-    fun searchOrders(queryKeywords: String) {
+    fun searchOrders(queryKeywords: String, context: Context? = null) {
         viewModelScope.launch {
             _isSearching.value = true
             _error.value = null
@@ -1102,7 +1169,12 @@ class HomeViewModel : ViewModel() {
 
                 if (response.isSuccessful) {
                     response.body()?.let { apiResponse ->
-                        _searchOrders.value = convertOrdersToRideShareItems(apiResponse)
+                        val items = convertOrdersToRideShareItems(apiResponse)
+                        _searchOrders.value = if (context != null && _posDetails.value.isNotEmpty()) {
+                            fillDistanceAndPrice(items, _posDetails.value, context.applicationContext)
+                        } else {
+                            items
+                        }
                     } ?: run {
                         _error.value = "未搜索到相关拼车行程"
                     }

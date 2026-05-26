@@ -42,6 +42,15 @@ def _make_out_trade_no(order_id: int) -> str:
     return f"WW{order_id}-{ts}-{short}"
 
 
+def _make_mock_pay_url(out_trade_no: str) -> str:
+    host_root = request.host_url.rstrip("/")
+    return f"{host_root}/api/payment/mock-pay/{out_trade_no}"
+
+
+def _is_mock_pay_url(pay_url: str | None) -> bool:
+    return bool(pay_url and "/api/payment/mock-pay/" in pay_url)
+
+
 # 支付宝 trade_status → 本系统 Payment.status
 def _alipay_status_to_local(trade_status: str) -> str:
     mapping = {
@@ -130,25 +139,20 @@ def pay_order():
     if payment and payment.status == "PAID":
         return jsonify({"code": 409, "message": "您已完成支付，请勿重复支付"}), 409
 
-    # 加载支付宝客户端
+    out_trade_no = _make_out_trade_no(order_id)
+    subject = f"星途拼车订单 #{order_id}"
+    pay_url = None
+    response_message = "支付订单创建成功"
+
+    # 加载支付宝客户端。若本地没有配置真实沙箱参数，退回到本地模拟支付页，方便项目演示。
     try:
         client = get_alipay_client()
         gateway = get_gateway()
-    except AlipayConfigError as exc:
-        return jsonify({"code": 500, "message": f"支付宝配置错误：{exc}"}), 500
-    except Exception as exc:  # pragma: no cover
-        _log.exception("加载支付宝客户端失败")
-        return jsonify({"code": 500, "message": "支付通道初始化失败"}), 500
+        host_root = request.host_url.rstrip("/")
+        return_url = get_return_url(default=f"{host_root}/api/payment/return")
+        notify_url = get_notify_url(default=f"{host_root}/api/payment/notify")
 
-    out_trade_no = _make_out_trade_no(order_id)
-    subject = f"星途拼车订单 #{order_id}"
-
-    host_root = request.host_url.rstrip("/")
-    return_url = get_return_url(default=f"{host_root}/api/payment/return")
-    notify_url = get_notify_url(default=f"{host_root}/api/payment/notify")
-
-    # 调用支付宝沙箱网页支付（page_pay）
-    try:
+        # 调用支付宝沙箱网页支付（page_pay）
         order_string = client.api_alipay_trade_page_pay(
             out_trade_no=out_trade_no,
             total_amount=format(amount_value, ".2f"),   # 金额必须是字符串、两位小数
@@ -156,11 +160,15 @@ def pay_order():
             return_url=return_url,
             notify_url=notify_url,
         )
-    except Exception as exc:
-        _log.exception("调用支付宝 page_pay 失败")
-        return jsonify({"code": 500, "message": f"创建支付订单失败：{exc}"}), 500
-
-    pay_url = f"{gateway}?{order_string}"
+        pay_url = f"{gateway}?{order_string}"
+    except AlipayConfigError as exc:
+        _log.warning("支付宝配置不可用，启用本地模拟支付：%s", exc)
+        pay_url = _make_mock_pay_url(out_trade_no)
+        response_message = "支付宝沙箱未配置，已创建本地模拟支付订单"
+    except Exception as exc:  # pragma: no cover
+        _log.exception("调用支付宝 page_pay 失败，启用本地模拟支付")
+        pay_url = _make_mock_pay_url(out_trade_no)
+        response_message = f"支付宝沙箱暂不可用，已创建本地模拟支付订单：{exc}"
 
     # 复用旧行或新建行
     if payment is None:
@@ -187,9 +195,45 @@ def pay_order():
 
     return jsonify({
         "code": 200,
-        "message": "支付订单创建成功",
+        "message": response_message,
         "data": _payment_to_dict(payment),
     })
+
+
+@payments_bp.route("/api/payment/mock-pay/<string:out_trade_no>", methods=["GET"])
+def mock_payment(out_trade_no):
+    payment = Payment.query.filter_by(out_trade_no=out_trade_no).first()
+    if not payment:
+        html = (
+            "<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+            "<title>模拟支付失败</title></head><body>"
+            "<h1>支付单不存在</h1><p>请回到 App 重新发起支付。</p>"
+            "</body></html>"
+        )
+        response = make_response(html, 404)
+        response.headers["Content-Type"] = "text/html; charset=utf-8"
+        return response
+
+    if payment.status != "PAID":
+        payment.status = "PAID"
+        payment.paid_at = datetime.datetime.now()
+        db.session.commit()
+
+    html = (
+        "<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>模拟支付完成</title>"
+        "<style>body{font-family:sans-serif;text-align:center;padding:48px;color:#333}"
+        "h1{color:#00A36C}p{color:#666}</style></head><body>"
+        "<h1>模拟支付成功</h1>"
+        "<p>本地测试支付已完成，请回到拼车 App 点击“点此刷新”。</p>"
+        "<p>本页面可以关闭。</p>"
+        "</body></html>"
+    )
+    response = make_response(html, 200)
+    response.headers["Content-Type"] = "text/html; charset=utf-8"
+    return response
 
 
 # 查当前用户对订单的本地支付状态
@@ -266,6 +310,13 @@ def payment_query():
 
     if not payment.out_trade_no:
         return jsonify({"code": 400, "message": "本地支付单缺失 out_trade_no"}), 400
+
+    if _is_mock_pay_url(payment.pay_url):
+        return jsonify({
+            "code": 200,
+            "message": "等待完成本地模拟支付",
+            "data": _payment_to_dict(payment),
+        })
 
     try:
         client = get_alipay_client()
