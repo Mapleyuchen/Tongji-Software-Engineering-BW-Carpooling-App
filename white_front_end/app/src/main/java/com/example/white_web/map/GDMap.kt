@@ -69,6 +69,13 @@ import com.amap.api.services.route.DriveRouteResult
 import com.amap.api.services.route.RouteSearch
 import com.example.white_web.R
 import com.example.white_web.ui.theme.White_webTheme
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.math.sqrt
+import kotlin.coroutines.resume
 
 /*      此函数进行位置的监听，图标显示              */
 /*      注意：高德默认定位图标显示存在不明bug        */
@@ -289,6 +296,82 @@ fun MarkerOptionsDialogPreview() {
     White_webTheme {
         MarkerOptionsDialog("上海南站", {}, {})
     }
+}
+
+/*
+ * 使用高德驾车路线规划接口计算两点间路线距离。
+ */
+suspend fun calculateDrivingDistanceMeters(
+    context: Context,
+    start: PosDetail,
+    end: PosDetail
+): Float? = suspendCancellableCoroutine { continuation ->
+    try {
+        val routeSearch = RouteSearch(context.applicationContext)
+        routeSearch.setRouteSearchListener(object : RouteSearch.OnRouteSearchListener {
+            override fun onDriveRouteSearched(result: DriveRouteResult?, errorCode: Int) {
+                val distance = if (errorCode == AMapException.CODE_AMAP_SUCCESS) {
+                    result?.paths?.firstOrNull()?.distance
+                } else {
+                    Log.e("Route", "Distance query error code: $errorCode")
+                    null
+                }
+
+                if (continuation.isActive) {
+                    continuation.resume(distance)
+                }
+            }
+
+            override fun onBusRouteSearched(
+                result: com.amap.api.services.route.BusRouteResult?,
+                errorCode: Int
+            ) {
+            }
+
+            override fun onWalkRouteSearched(
+                result: com.amap.api.services.route.WalkRouteResult?,
+                errorCode: Int
+            ) {
+            }
+
+            override fun onRideRouteSearched(
+                result: com.amap.api.services.route.RideRouteResult?,
+                errorCode: Int
+            ) {
+            }
+        })
+
+        val fromAndTo = RouteSearch.FromAndTo(
+            LatLonPoint(start.lat, start.lon),
+            LatLonPoint(end.lat, end.lon)
+        )
+        val query = RouteSearch.DriveRouteQuery(
+            fromAndTo,
+            RouteSearch.DRIVING_NORMAL_CAR,
+            null,
+            null,
+            ""
+        )
+        routeSearch.calculateDriveRouteAsyn(query)
+    } catch (e: Exception) {
+        Log.e("Route", "Distance query failed", e)
+        if (continuation.isActive) {
+            continuation.resume(null)
+        }
+    }
+}
+
+fun estimateDrivingDistanceMeters(start: PosDetail, end: PosDetail): Float {
+    val earthRadiusMeters = 6371000.0
+    val startLat = Math.toRadians(start.lat)
+    val endLat = Math.toRadians(end.lat)
+    val deltaLat = Math.toRadians(end.lat - start.lat)
+    val deltaLon = Math.toRadians(end.lon - start.lon)
+    val haversine = sin(deltaLat / 2).pow(2.0) +
+        cos(startLat) * cos(endLat) * sin(deltaLon / 2).pow(2.0)
+    val straightDistance = earthRadiusMeters * 2 * atan2(sqrt(haversine), sqrt(1 - haversine))
+
+    return (straightDistance * 1.28).toFloat()
 }
 
 /*

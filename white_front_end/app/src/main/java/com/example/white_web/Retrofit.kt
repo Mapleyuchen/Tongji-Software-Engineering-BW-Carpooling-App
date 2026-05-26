@@ -120,6 +120,36 @@ data class VehicleListData(
     val list: List<VehicleData>
 )
 
+data class CompletedOrderData(
+    @SerializedName("order_id")
+    val orderId: Int,
+    val user1: String,
+    val user2: String?,
+    val user3: String?,
+    val user4: String?,
+    val driver: String?,
+    val departure: String,
+    val destination: String,
+    val date: String,
+    @SerializedName("earliest_departure_time")
+    val earliestDepartureTime: String,
+    @SerializedName("latest_departure_time")
+    val latestDepartureTime: String,
+    val remark: String?,
+    @SerializedName("completed_at")
+    val completedAt: String?
+)
+
+data class CompletedOrderListResponse(
+    val code: Int,
+    val message: String,
+    val data: CompletedOrderListData?
+)
+
+data class CompletedOrderListData(
+    val list: List<CompletedOrderData>
+)
+
 // 优惠券相关数据类
 data class CouponCreateRequest(
     @SerializedName("coupon_name")
@@ -408,6 +438,11 @@ interface ApiService {
 
     @GET("/api/orders/not-started")
     suspend fun getNotStartedOrders(): Response<AllOrdersResponse>
+
+    @GET("/api/user/completed-orders")
+    suspend fun getCompletedOrders(
+        @Header("Authorization") token: String? = TOKEN
+    ): Response<CompletedOrderListResponse>
 
     // 车辆管理接口
     @POST("/api/vehicle/add")

@@ -19,6 +19,9 @@ import com.amap.api.location.AMapLocationClient
 import com.example.white_web.home.CurrentOrdersScreen
 import com.example.white_web.home.CurrentOrdersViewModel
 import com.example.white_web.home.HomePage
+import com.example.white_web.home.MyInfoScreen
+import com.example.white_web.home.TripHistoryScreen
+import com.example.white_web.home.VehicleManagementScreen
 import com.example.white_web.ui.theme.White_webTheme
 
 
@@ -79,6 +82,15 @@ fun AppNavigation() {
         composable("currentOrders") {
             val viewModel = viewModel<CurrentOrdersViewModel>()
             CurrentOrdersScreen(mainNavController, viewModel)
+        }
+        composable("myInfo") {
+            MyInfoScreen(mainNavController)
+        }
+        composable("tripHistory") {
+            TripHistoryScreen(mainNavController)
+        }
+        composable("vehicleManagement") {
+            VehicleManagementScreen(mainNavController)
         }
     }
 }

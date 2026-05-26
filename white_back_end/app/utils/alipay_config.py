@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 _CONFIG_FILE_NAME = "alipay_sandbox.json"
+_LOCAL_CONFIG_FILE_NAME = "alipay_sandbox.local.json"
 _DEFAULT_GATEWAY = "https://openapi-sandbox.dl.alipaydev.com/gateway.do"
 
 
@@ -17,7 +18,11 @@ def _backend_dir() -> Path:
     return Path(__file__).resolve().parents[2]
 
 def _config_path() -> Path:
-    return _backend_dir() / "config" / _CONFIG_FILE_NAME
+    config_dir = _backend_dir() / "config"
+    local_path = config_dir / _LOCAL_CONFIG_FILE_NAME
+    if local_path.exists():
+        return local_path
+    return config_dir / _CONFIG_FILE_NAME
 
 # 读取并解析 JSON 配置文件
 def _load_json_config(path: Path) -> dict:
@@ -90,6 +95,14 @@ def load_alipay_config() -> dict:
         if missing:
             raise AlipayConfigError(
                 "支付宝配置缺失字段: " + ", ".join(missing) + f"。请检查 {path} 是否填写完整。"
+            )
+        placeholders = [
+            k for k in ["app_id", "app_private_key", "alipay_public_key"]
+            if str(cfg.get(k, "")).strip().upper().startswith("YOUR_")
+        ]
+        if placeholders:
+            raise AlipayConfigError(
+                "支付宝配置仍是占位符: " + ", ".join(placeholders) + f"。请检查 {path} 是否填写真实沙箱参数。"
             )
 
         # 把无头尾的 base64 字符串包装为 PEM，方便 SDK 直接使用

@@ -19,6 +19,24 @@ __pycache__/
 venv/
 env/
 
+# Local env/secrets
+.env
+.env.*
+!.env.example
+*.local
+*.local.*
+white_back_end/config/*.local.json
+*.jks
+*.keystore
+
+# Local runtime output
+*.log
+*.out
+*.err
+*.sqlite
+*.sqlite3
+*.db
+
 # Android/Gradle
 .gradle/
 **/.gradle/

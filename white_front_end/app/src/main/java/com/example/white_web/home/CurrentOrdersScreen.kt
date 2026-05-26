@@ -57,6 +57,7 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -134,6 +135,8 @@ import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import org.json.JSONObject
+import retrofit2.Response
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -216,8 +219,8 @@ data class ArrivalStatusData(
     val user4Arrived: Boolean,
     @SerializedName("driver_arrived")
     val driverArrived: Boolean,
-    @SerializedName("all_arrived")
-    val allArrived: Boolean
+    @SerializedName("all_passengers_arrived")
+    val allPassengersArrived: Boolean = false
 )
 
 // 司机评分请求体
@@ -233,6 +236,32 @@ data class BaseResponse(
     val message: String
 )
 
+private fun <T> Response<T>.apiMessageOr(defaultMessage: String): String {
+    body()?.let { body ->
+        runCatching {
+            val field = body::class.java.getDeclaredField("message")
+            field.isAccessible = true
+            val value = field.get(body) as? String
+            if (!value.isNullOrBlank()) {
+                return value
+            }
+        }
+    }
+
+    val rawError = runCatching { errorBody()?.string() }.getOrNull()
+    if (!rawError.isNullOrBlank()) {
+        val parsedMessage = runCatching {
+            JSONObject(rawError).optString("message")
+        }.getOrNull()
+        if (!parsedMessage.isNullOrBlank()) {
+            return parsedMessage
+        }
+        return rawError.take(120)
+    }
+
+    return defaultMessage
+}
+
 // -------------------- ViewModel --------------------
 
 /**
@@ -247,9 +276,17 @@ class CurrentOrdersViewModel : ViewModel() {
     private val _isLoading = MutableStateFlow(false)
     val isLoading = _isLoading.asStateFlow()
 
+    // 确认到达按钮的局部加载状态，避免整页被替换成加载圈
+    private val _isConfirmingArrival = MutableStateFlow(false)
+    val isConfirmingArrival = _isConfirmingArrival.asStateFlow()
+
     // 错误信息
     private val _error = MutableStateFlow<String?>(null)
     val error = _error.asStateFlow()
+
+    // 一次性提示信息
+    private val _notice = MutableStateFlow<String?>(null)
+    val notice = _notice.asStateFlow()
 
     // 是否显示评分对话框
     private val _showRatingDialog = MutableStateFlow(false)
@@ -322,17 +359,29 @@ class CurrentOrdersViewModel : ViewModel() {
         }
     }
 
+    private suspend fun refreshCurrentOrderSilently() {
+        try {
+            val response = APISERVICCE.getCurrentOrder()
+            if (response.isSuccessful && response.body()?.code == 200) {
+                _currentOrder.value = response.body()?.data
+            }
+        } catch (e: Exception) {
+            Log.e("CurrentOrdersViewModel", "刷新当前订单失败", e)
+        }
+    }
+
     // 确认到达
     fun confirmArrival(orderId: Int) {
         viewModelScope.launch {
-            _isLoading.value = true
+            _isConfirmingArrival.value = true
             _error.value = null
             try {
                 val response = APISERVICCE.confirmArrival(request = OrderIdRequest(orderId))
-                if (response.isSuccessful && response.body()?.code == 200) {
+                val body = response.body()
+                if (response.isSuccessful && body?.code == 200) {
                     // 更新本地状态
                     _currentOrder.value?.let { currentOrderData ->
-                        val updatedStatus = response.body()?.data
+                        val updatedStatus = body.data
                         if (updatedStatus != null) {
                             _currentOrder.value = currentOrderData.copy(
                                 status = OrderStatusDetail(
@@ -344,15 +393,26 @@ class CurrentOrdersViewModel : ViewModel() {
                                     driverArrived = updatedStatus.driverArrived
                                 )
                             )
+                            val isDriverUser = currentOrderData.order.driver == USERNAME
+                            _notice.value = when {
+                                isDriverUser && updatedStatus.allPassengersArrived -> "已确认到达，可以开始行程"
+                                isDriverUser -> "已确认到达，等待乘客确认"
+                                updatedStatus.allPassengersArrived -> "已确认到达，所有乘客已到达，等待司机开始行程"
+                                else -> "已确认到达，等待其他参与者确认"
+                            }
+                            refreshCurrentOrderSilently()
+                        } else {
+                            _notice.value = body.message
+                            refreshCurrentOrderSilently()
                         }
                     }
                 } else {
-                    _error.value = response.body()?.message ?: "确认到达失败"
+                    _error.value = response.apiMessageOr("确认到达失败")
                 }
             } catch (e: Exception) {
                 _error.value = "网络请求错误: ${e.message}"
             } finally {
-                _isLoading.value = false
+                _isConfirmingArrival.value = false
             }
         }
     }
@@ -370,7 +430,7 @@ class CurrentOrdersViewModel : ViewModel() {
                         // 司机确认后刷新订单状态
                         fetchCurrentOrder()
                     } else {
-                        _error.value = response.body()?.message ?: "确认到达目的地失败"
+                        _error.value = response.apiMessageOr("确认到达目的地失败")
                     }
                 } else {
                     // 对于普通用户，直接显示评分对话框
@@ -411,7 +471,7 @@ class CurrentOrdersViewModel : ViewModel() {
                     // 刷新订单状态
                     fetchCurrentOrder()
                 } else {
-                    _error.value = response.body()?.message ?: "评分提交失败"
+                    _error.value = response.apiMessageOr("评分提交失败")
                 }
             } catch (e: Exception) {
                 _error.value = "网络请求错误: ${e.message}"
@@ -470,6 +530,10 @@ class CurrentOrdersViewModel : ViewModel() {
         _error.value = null
     }
 
+    fun clearNotice() {
+        _notice.value = null
+    }
+
     // 开始行程
     fun startTrip(orderId: Int) {
         viewModelScope.launch {
@@ -481,7 +545,7 @@ class CurrentOrdersViewModel : ViewModel() {
                     // 开始行程成功后刷新订单状态
                     fetchCurrentOrder()
                 } else {
-                    _error.value = response.body()?.message ?: "开始行程失败"
+                    _error.value = response.apiMessageOr("开始行程失败")
                 }
             } catch (e: Exception) {
                 _error.value = "网络请求错误: ${e.message}"
@@ -543,10 +607,10 @@ class CurrentOrdersViewModel : ViewModel() {
                     if (!url.isNullOrBlank()) {
                         _payUrl.value = url
                     } else {
-                        _error.value = "未获取到支付链接，请稍后重试"
+                        _error.value = body.message.ifBlank { "未获取到支付链接，请稍后重试" }
                     }
                 } else {
-                    _error.value = body?.message ?: "创建支付订单失败"
+                    _error.value = response.apiMessageOr("创建支付订单失败")
                     fetchPaymentStatus(orderId)
                 }
             } catch (e: Exception) {
@@ -582,7 +646,7 @@ class CurrentOrdersViewModel : ViewModel() {
                     data?.amount?.let { _paymentAmount.value = it }
                 } else {
                     // 查询失败不覆盖已有状态，只把 message 暴露出去
-                    _error.value = body?.message ?: "查询支付状态失败"
+                    _error.value = response.apiMessageOr("查询支付状态失败")
                 }
             } catch (e: Exception) {
                 _error.value = "网络请求错误: ${e.message}"
@@ -608,9 +672,12 @@ class CurrentOrdersViewModel : ViewModel() {
 fun CurrentOrdersScreen(navController: NavHostController, viewModel: CurrentOrdersViewModel) {
     val currentOrder by viewModel.currentOrder.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val isConfirmingArrival by viewModel.isConfirmingArrival.collectAsState()
     val error by viewModel.error.collectAsState()
+    val notice by viewModel.notice.collectAsState()
     val showRatingDialog by viewModel.showRatingDialog.collectAsState()
     val ratingValue by viewModel.ratingValue.collectAsState()
+    val context = LocalContext.current
 
     // 获取当前用户名
     val currentUsername = USERNAME ?: "未登录"
@@ -618,6 +685,14 @@ fun CurrentOrdersScreen(navController: NavHostController, viewModel: CurrentOrde
     // 页面加载时清除错误
     LaunchedEffect(Unit) {
         viewModel.clearError()
+    }
+
+    LaunchedEffect(notice) {
+        val message = notice
+        if (!message.isNullOrBlank()) {
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            viewModel.clearNotice()
+        }
     }
 
     // Scaffold布局
@@ -710,7 +785,8 @@ fun CurrentOrdersScreen(navController: NavHostController, viewModel: CurrentOrde
                 OrderDetailContent(
                     currentOrder = currentOrder!!,
                     currentUsername = currentUsername,
-                    viewModel = viewModel
+                    viewModel = viewModel,
+                    isConfirmingArrival = isConfirmingArrival
                 )
             }
 
@@ -739,7 +815,8 @@ fun CurrentOrdersScreen(navController: NavHostController, viewModel: CurrentOrde
 fun OrderDetailContent(
     currentOrder: CurrentOrderData,
     currentUsername: String,
-    viewModel: CurrentOrdersViewModel
+    viewModel: CurrentOrdersViewModel,
+    isConfirmingArrival: Boolean = false
 ) {
     // 解析日期和时间
     val orderDate = try {
@@ -1067,6 +1144,7 @@ fun OrderDetailContent(
                 isCurrentUserArrived = isCurrentUserArrived,
                 isDriver = isDriver,
                 hasRated = hasRated,
+                isConfirmingArrival = isConfirmingArrival,
                 onConfirmArrival = { viewModel.confirmArrival(currentOrder.order.orderId) },
                 onConfirmDestination = {
                     viewModel.confirmDestination(
@@ -1364,6 +1442,7 @@ fun ActionButtons(
     isCurrentUserArrived: Boolean,
     isDriver: Boolean,
     hasRated: Boolean,
+    isConfirmingArrival: Boolean = false,
     onConfirmArrival: () -> Unit,
     onConfirmDestination: () -> Unit,
     onStartTrip: () -> Unit = {},
@@ -1416,9 +1495,14 @@ fun ActionButtons(
                         Button(
                             onClick = onConfirmArrival,
                             modifier = Modifier.fillMaxWidth(),
+                            enabled = !isConfirmingArrival,
                             colors = ButtonDefaults.buttonColors(containerColor = NeonCyan)
                         ) {
-                            Text(text = "确认到达", modifier = Modifier.padding(8.dp), color = DeepSpace)
+                            Text(
+                                text = if (isConfirmingArrival) "确认中..." else "确认到达",
+                                modifier = Modifier.padding(8.dp),
+                                color = DeepSpace
+                            )
                         }
                     }
                 } else {
@@ -1428,17 +1512,18 @@ fun ActionButtons(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(2.dp),
-                        enabled = !isCurrentUserArrived,
+                        enabled = !isCurrentUserArrived && !isConfirmingArrival,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (!isCurrentUserArrived) NeonCyan else Color(0xFFD0B8A0),
                             disabledContainerColor = Color(0xFFECE0D6)
                         )
                     ) {
-                        Text(
-                            text = if (isCurrentUserArrived) "已确认到达" else "确认到达",
-                            modifier = Modifier.padding(8.dp),
-                            color = if (!isCurrentUserArrived) DeepSpace else Color(0xFF8B6A50)
-                        )
+                        val buttonText = when {
+                            isConfirmingArrival -> "确认中..."
+                            isCurrentUserArrived -> "已确认到达"
+                            else -> "确认到达"
+                        }
+                        Text(text = buttonText, modifier = Modifier.padding(8.dp), color = if (!isCurrentUserArrived) DeepSpace else Color(0xFF8B6A50))
                     }
                 }
             }
@@ -1513,7 +1598,7 @@ fun ActionButtons(
                         }
                         if (isAwaiting) {
                             Text(
-                                text = "请在浏览器/支付宝沙箱完成付款后回到 App 点击「点此刷新」",
+                                text = "如果已完成本地模拟支付或支付宝付款，请回到 App 点击「点此刷新」",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF8B6A50),
                                 modifier = Modifier.padding(top = 4.dp, start = 8.dp)
