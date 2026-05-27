@@ -1,4 +1,5 @@
 from .auth import auth_bp
+from .conversations import conversations_bp
 from .coupons import coupons_bp
 from .order_status import order_status_bp
 from .orders import orders_bp
@@ -19,3 +20,4 @@ def register_blueprints(app):
     app.register_blueprint(vehicles_bp)
     app.register_blueprint(coupons_bp)
     app.register_blueprint(payments_bp)
+    app.register_blueprint(conversations_bp)

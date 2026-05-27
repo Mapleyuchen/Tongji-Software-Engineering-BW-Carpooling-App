@@ -17,3 +17,7 @@ class Config:
         f"{DB_HOST}:{DB_PORT}/{DB_NAME}?charset={DB_CHARSET}"
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+    SOCKETIO_REDIS_URL = os.getenv("SOCKETIO_REDIS_URL")
+    SOCKETIO_ASYNC_MODE = os.getenv("SOCKETIO_ASYNC_MODE", "threading")
+    SOCKETIO_CORS_ALLOWED_ORIGINS = os.getenv("SOCKETIO_CORS_ALLOWED_ORIGINS", "*")

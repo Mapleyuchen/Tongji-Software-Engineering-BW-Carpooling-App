@@ -14,6 +14,7 @@ from app.models import (
     UserCoupon,
     Vehicle,
 )
+from app.utils.chat import schedule_conversation_close
 from app.utils.auth import check_token, generate_token
 
 
@@ -196,6 +197,7 @@ def confirm_destination():
             order_status.status = 2  # 已完成
             # 设置完成时间为当前时间
             order_status.completed_at = datetime.datetime.now()
+            schedule_conversation_close(order.order_id, order_status.completed_at)
             message = "确认到达目的地成功"
         else:
             message = "状态更新失败，订单状态异常"

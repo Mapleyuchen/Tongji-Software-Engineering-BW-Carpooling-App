@@ -14,6 +14,15 @@ from app.models import (
     UserCoupon,
     Vehicle,
 )
+from app.utils.chat import (
+    ROLE_DRIVER,
+    ROLE_PASSENGER,
+    add_member_to_order_conversation,
+    append_system_message_for_order,
+    create_conversation_for_new_order,
+    has_any_participant,
+    remove_member_from_order_conversation,
+)
 from app.utils.auth import check_token, generate_token
 
 
@@ -85,7 +94,12 @@ def add_order():
         remark=data['remark']
     )
     db.session.add(new_order)
+    db.session.flush()
+
+    db.session.add(OrderStatus(order_id=new_order.order_id))
+    create_conversation_for_new_order(new_order, current_user)
     db.session.commit()
+
     data = {
             "order_id": new_order.order_id,
             "departure": new_order.departure,
@@ -185,7 +199,8 @@ def delete_order():
                 users[3] if len(users) > 3 else None
             )
 
-            db.session.commit()
+            append_system_message_for_order(order.order_id, f"{current_user}已退出拼车")
+            remove_member_from_order_conversation(order.order_id, current_user)
 
             # 检查是否所有用户都离开了
             if len(users) == 0:
@@ -197,6 +212,8 @@ def delete_order():
                 
                 # 然后删除订单本身
                 db.session.delete(order)
+                db.session.commit()
+            else:
                 db.session.commit()
 
             return jsonify({
@@ -212,6 +229,12 @@ def delete_order():
     elif user_info.usertype == 2:
         if order.driver == current_user:
             order.driver = None
+            append_system_message_for_order(order.order_id, f"司机{current_user}已退出拼车")
+            remove_member_from_order_conversation(order.order_id, current_user)
+            if not has_any_participant(order):
+                DriverRating.query.filter_by(order_id=order.order_id).delete()
+                OrderStatus.query.filter_by(order_id=order.order_id).delete()
+                db.session.delete(order)
             db.session.commit()
             return jsonify({
                 "code": 200,
@@ -262,6 +285,11 @@ def join_order():
     if user_info.usertype == 1:  # 一般用户
         users = [order.user1, order.user2, order.user3, order.user4]
         non_empty_users = [user for user in users if user is not None]
+        if current_user in non_empty_users:
+            return jsonify({
+                "code": 409,
+                "message": "用户已在订单中"
+            }), 409
         if len(non_empty_users) >= 4:
             return jsonify({
                 "code": 422,
@@ -277,6 +305,8 @@ def join_order():
         elif order.user4 is None:
             order.user4 = current_user
 
+        add_member_to_order_conversation(order, current_user, ROLE_PASSENGER)
+        append_system_message_for_order(order.order_id, f"{current_user}已加入拼车")
         db.session.commit()
 
         return jsonify({
@@ -287,6 +317,8 @@ def join_order():
     elif user_info.usertype == 2:  # 司机
         if order.driver is None:
             order.driver = current_user
+            add_member_to_order_conversation(order, current_user, ROLE_DRIVER)
+            append_system_message_for_order(order.order_id, f"司机{current_user}已接单")
             db.session.commit()
             return jsonify({
                 "code": 200,
