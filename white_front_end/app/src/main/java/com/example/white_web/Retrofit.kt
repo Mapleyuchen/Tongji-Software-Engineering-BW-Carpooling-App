@@ -14,6 +14,15 @@ import com.example.white_web.home.CurrentOrderResponse
 import com.example.white_web.home.DriverRatingRequest
 import com.example.white_web.home.LookResponse
 import com.example.white_web.home.OrderIdRequest
+import com.example.white_web.chat.ChatConversationListResponse
+import com.example.white_web.chat.ChatConversationResponse
+import com.example.white_web.chat.ChatMessageListResponse
+import com.example.white_web.chat.ClearChatHistoryResponse
+import com.example.white_web.chat.HideChatConversationResponse
+import com.example.white_web.chat.MarkChatReadRequest
+import com.example.white_web.chat.MarkChatReadResponse
+import com.example.white_web.chat.SendChatMessageRequest
+import com.example.white_web.chat.SendChatMessageResponse
 import com.google.gson.annotations.SerializedName
 import retrofit2.Response
 import retrofit2.Retrofit
@@ -23,9 +32,12 @@ import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.Path
+import retrofit2.http.Query
+
+const val SERVER_BASE_URL = "http://10.0.2.2:8443/"
 
 private val retrofit = Retrofit.Builder()
-    .baseUrl("http://10.0.2.2:8443/")  // 后端地址
+    .baseUrl(SERVER_BASE_URL)  // 后端地址
 //    .baseUrl("http://59.110.22.187:8443/") // 服务器地址
     .addConverterFactory(GsonConverterFactory.create())
     .build()
@@ -443,6 +455,60 @@ interface ApiService {
     suspend fun getCompletedOrders(
         @Header("Authorization") token: String? = TOKEN
     ): Response<CompletedOrderListResponse>
+
+    @GET("/api/chat/conversations/current")
+    suspend fun getCurrentChatConversation(
+        @Header("Authorization") token: String? = TOKEN
+    ): Response<ChatConversationResponse>
+
+    @GET("/api/chat/conversations/not-started")
+    suspend fun getNotStartedChatConversations(
+        @Header("Authorization") token: String? = TOKEN
+    ): Response<ChatConversationListResponse>
+
+    @GET("/api/chat/conversations/history")
+    suspend fun getHistoryChatConversations(
+        @Header("Authorization") token: String? = TOKEN
+    ): Response<ChatConversationListResponse>
+
+    @GET("/api/chat/conversations/{conversation_id}")
+    suspend fun getChatConversationDetail(
+        @Path("conversation_id") conversationId: Int,
+        @Header("Authorization") token: String? = TOKEN
+    ): Response<ChatConversationResponse>
+
+    @GET("/api/chat/conversations/{conversation_id}/messages")
+    suspend fun getChatMessages(
+        @Path("conversation_id") conversationId: Int,
+        @Query("after_seq") afterSeq: Int = 0,
+        @Header("Authorization") token: String? = TOKEN
+    ): Response<ChatMessageListResponse>
+
+    @POST("/api/chat/conversations/{conversation_id}/messages")
+    suspend fun sendChatMessage(
+        @Path("conversation_id") conversationId: Int,
+        @Header("Authorization") token: String? = TOKEN,
+        @Body request: SendChatMessageRequest
+    ): Response<SendChatMessageResponse>
+
+    @POST("/api/chat/conversations/{conversation_id}/read")
+    suspend fun markChatRead(
+        @Path("conversation_id") conversationId: Int,
+        @Header("Authorization") token: String? = TOKEN,
+        @Body request: MarkChatReadRequest = MarkChatReadRequest()
+    ): Response<MarkChatReadResponse>
+
+    @POST("/api/chat/conversations/{conversation_id}/clear")
+    suspend fun clearChatHistory(
+        @Path("conversation_id") conversationId: Int,
+        @Header("Authorization") token: String? = TOKEN
+    ): Response<ClearChatHistoryResponse>
+
+    @POST("/api/chat/conversations/{conversation_id}/hide")
+    suspend fun hideChatConversation(
+        @Path("conversation_id") conversationId: Int,
+        @Header("Authorization") token: String? = TOKEN
+    ): Response<HideChatConversationResponse>
 
     // 车辆管理接口
     @POST("/api/vehicle/add")
