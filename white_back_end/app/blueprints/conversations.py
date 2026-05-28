@@ -3,26 +3,28 @@ import datetime
 import jwt
 from flask import Blueprint, jsonify, request
 
-from app.extensions import db, socketio
+from app.extensions import db
 from app.models import Conversation, ConversationMember, Message, Order, OrderStatus
 from app.utils.auth import check_token
 from app.utils.chat import (
     CONVERSATION_STATUS_CLOSED,
     CONVERSATION_STATUS_OPEN,
     ChatError,
-    close_conversation_if_due,
+    close_conversation_now,
+    is_conversation_due,
     require_member,
     send_user_text_message,
     serialize_conversation,
     serialize_message,
 )
+from app.utils.chat_events import (
+    emit_conversation_closed,
+    emit_conversation_updated,
+    emit_message_new,
+)
 
 
 conversations_bp = Blueprint("conversations", __name__)
-
-
-def _conversation_room(conversation_id):
-    return f"conversation:{conversation_id}"
 
 
 def _current_username_or_response():
@@ -49,13 +51,43 @@ def _participant_filter(username):
 
 
 def _close_due_conversations():
-    now = datetime.datetime.now()
-    Conversation.query.filter(
-        Conversation.status == CONVERSATION_STATUS_OPEN,
-        Conversation.close_at.isnot(None),
-        Conversation.close_at <= now,
-    ).update({"status": CONVERSATION_STATUS_CLOSED}, synchronize_session=False)
+    due_conversation_ids = [
+        row[0]
+        for row in db.session.query(Conversation.conversation_id)
+        .filter(
+            Conversation.status == CONVERSATION_STATUS_OPEN,
+            Conversation.close_at.isnot(None),
+            Conversation.close_at <= datetime.datetime.now(),
+        )
+        .all()
+    ]
+    for conversation_id in due_conversation_ids:
+        conversation, message, closed_now = close_conversation_now(conversation_id)
+        db.session.commit()
+        if closed_now and conversation:
+            _emit_closed_events(conversation, message)
+
+
+def _emit_closed_events(conversation, message):
+    if message:
+        emit_message_new(message, conversation)
+    emit_conversation_closed(conversation)
+    emit_conversation_updated(
+        conversation,
+        reason="conversation_closed",
+        message=message,
+    )
+
+
+def _close_due_conversation_with_notice(conversation):
+    if not is_conversation_due(conversation):
+        return conversation, None, False
+
+    conversation, message, closed_now = close_conversation_now(conversation.conversation_id)
     db.session.commit()
+    if closed_now and conversation:
+        _emit_closed_events(conversation, message)
+    return conversation, message, closed_now
 
 
 def _passenger_count(order):
@@ -288,9 +320,8 @@ def get_chat_conversation_detail(conversation_id):
         return jsonify({"code": 404, "message": "群聊不存在或无权访问"}), 404
 
     order, order_status, conversation, member = row
-    close_conversation_if_due(conversation)
+    conversation, _, _ = _close_due_conversation_with_notice(conversation)
     data = _serialize_conversation_item(order, order_status, conversation, member)
-    db.session.commit()
     return _json_success({"conversation": data})
 
 
@@ -346,15 +377,7 @@ def send_chat_message(conversation_id):
         conversation_data = serialize_conversation(conversation)
         db.session.commit()
         if created:
-            socketio.emit(
-                "message:new",
-                {
-                    "message": message_data,
-                    "conversation": conversation_data,
-                    "created": created,
-                },
-                to=_conversation_room(conversation_id),
-            )
+            emit_message_new(message, conversation, created=created)
         return _json_success(
             {
                 "message": message_data,
@@ -365,7 +388,11 @@ def send_chat_message(conversation_id):
         )
     except ChatError as error:
         if error.should_commit:
+            conversation = error.conversation or Conversation.query.get(conversation_id)
+            close_message = error.close_message
             db.session.commit()
+            if conversation:
+                _emit_closed_events(conversation, close_message)
         else:
             db.session.rollback()
         return jsonify({"code": error.code, "message": error.message}), error.status_code
@@ -418,9 +445,8 @@ def clear_chat_history(conversation_id):
     except ChatError as error:
         return jsonify({"code": error.code, "message": error.message}), error.status_code
 
-    close_conversation_if_due(conversation)
+    conversation, _, _ = _close_due_conversation_with_notice(conversation)
     if conversation.status == CONVERSATION_STATUS_CLOSED:
-        db.session.commit()
         return jsonify({"code": 400, "message": "已关闭群聊请使用删除群聊"}), 400
 
     try:
@@ -456,7 +482,7 @@ def hide_closed_chat_conversation(conversation_id):
     except ChatError as error:
         return jsonify({"code": error.code, "message": error.message}), error.status_code
 
-    close_conversation_if_due(conversation)
+    conversation, _, _ = _close_due_conversation_with_notice(conversation)
     if conversation.status != CONVERSATION_STATUS_CLOSED:
         db.session.rollback()
         return jsonify({"code": 400, "message": "只能删除已关闭群聊"}), 400

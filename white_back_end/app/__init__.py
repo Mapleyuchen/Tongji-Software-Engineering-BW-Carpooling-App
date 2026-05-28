@@ -12,9 +12,8 @@ def create_app(config_class=Config):
     socketio_options = {
         "async_mode": app.config["SOCKETIO_ASYNC_MODE"],
         "cors_allowed_origins": app.config["SOCKETIO_CORS_ALLOWED_ORIGINS"],
+        "message_queue": app.config["SOCKETIO_REDIS_URL"],
     }
-    if app.config["SOCKETIO_REDIS_URL"]:
-        socketio_options["message_queue"] = app.config["SOCKETIO_REDIS_URL"]
     socketio.init_app(app, **socketio_options)
 
     from app import models  # noqa: F401

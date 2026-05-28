@@ -13,14 +13,26 @@ MESSAGE_TYPE_SYSTEM_NOTICE = 2
 CONVERSATION_STATUS_OPEN = 0
 CONVERSATION_STATUS_CLOSED = 1
 
+CONVERSATION_CLOSED_NOTICE = "会话已关闭"
+
 
 class ChatError(Exception):
-    def __init__(self, message, status_code=400, code=400, should_commit=False):
+    def __init__(
+        self,
+        message,
+        status_code=400,
+        code=400,
+        should_commit=False,
+        conversation=None,
+        close_message=None,
+    ):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
         self.code = code
         self.should_commit = should_commit
+        self.conversation = conversation
+        self.close_message = close_message
 
 
 def get_passenger_usernames(order):
@@ -163,8 +175,20 @@ def send_user_text_message(conversation_id, sender_username, content, client_msg
     if existing_message:
         return existing_message, False
 
-    closed_now = close_conversation_if_due(conversation)
-    ensure_conversation_can_send(conversation, should_commit=closed_now)
+    if is_conversation_due(conversation):
+        closed_conversation, close_message, closed_now = close_conversation_now(
+            conversation.conversation_id
+        )
+        raise ChatError(
+            "群聊已关闭，无法发送消息",
+            status_code=403,
+            code=403,
+            should_commit=closed_now,
+            conversation=closed_conversation,
+            close_message=close_message,
+        )
+
+    ensure_conversation_can_send(conversation)
 
     message = append_message(
         conversation=conversation,
@@ -194,18 +218,27 @@ def append_message(conversation, message_type, content, sender_username=None, cl
     return message
 
 
-def close_conversation_if_due(conversation, now=None):
+def is_conversation_due(conversation, now=None):
     if conversation.status == CONVERSATION_STATUS_CLOSED:
         return False
     if not conversation.close_at:
         return False
 
     now = now or datetime.datetime.now()
-    if conversation.close_at > now:
-        return False
+    return conversation.close_at <= now
+
+
+def close_conversation_now(conversation_id):
+    conversation = get_conversation_for_update(conversation_id)
+    if not conversation:
+        return None, None, False
+
+    if conversation.status == CONVERSATION_STATUS_CLOSED:
+        return conversation, None, False
 
     conversation.status = CONVERSATION_STATUS_CLOSED
-    return True
+    message = append_system_message(conversation, CONVERSATION_CLOSED_NOTICE)
+    return conversation, message, True
 
 
 def ensure_conversation_can_send(conversation, should_commit=False):
@@ -226,8 +259,8 @@ def schedule_conversation_close(order_id, completed_at):
     close_at = completed_at + datetime.timedelta(minutes=10)
     conversation.status = CONVERSATION_STATUS_OPEN
     conversation.close_at = close_at
-    append_system_message(conversation, "订单已完成，群聊将在10分钟后关闭")
-    return conversation
+    message = append_system_message(conversation, "订单已完成，群聊将在10分钟后关闭")
+    return conversation, message
 
 
 def serialize_message(message):

@@ -6,20 +6,23 @@ from app.extensions import db, socketio
 from app.models import Conversation, User
 from app.utils.chat import (
     ChatError,
-    close_conversation_if_due,
+    close_conversation_now,
     get_conversation_for_update,
+    is_conversation_due,
     require_member,
     send_user_text_message,
     serialize_conversation,
     serialize_message,
 )
+from app.utils.chat_events import (
+    conversation_room,
+    emit_conversation_closed,
+    emit_conversation_updated,
+    emit_message_new,
+)
 
 
 _sid_to_username = {}
-
-
-def conversation_room(conversation_id):
-    return f"conversation:{conversation_id}"
 
 
 def _normalize_token(token):
@@ -78,6 +81,17 @@ def _handle_unexpected_error():
     }
 
 
+def _emit_closed_events(conversation, message):
+    if message:
+        emit_message_new(message, conversation)
+    emit_conversation_closed(conversation)
+    emit_conversation_updated(
+        conversation,
+        reason="conversation_closed",
+        message=message,
+    )
+
+
 @socketio.on("connect")
 def handle_connect(auth):
     username = _authenticate(auth)
@@ -110,7 +124,12 @@ def handle_join_conversation(data):
             raise ChatError("群聊不存在", status_code=404, code=404)
 
         require_member(conversation.conversation_id, username)
-        closed_now = close_conversation_if_due(conversation)
+        close_message = None
+        closed_now = False
+        if is_conversation_due(conversation):
+            conversation, close_message, closed_now = close_conversation_now(
+                conversation.conversation_id
+            )
         conversation_data = serialize_conversation(conversation)
         db.session.commit()
 
@@ -118,11 +137,7 @@ def handle_join_conversation(data):
         join_room(room)
 
         if closed_now:
-            socketio.emit(
-                "conversation:closed",
-                {"conversation": conversation_data},
-                to=room,
-            )
+            _emit_closed_events(conversation, close_message)
 
         return {
             "code": 200,
@@ -178,20 +193,17 @@ def handle_send_message(data):
             "created": created,
         }
         if created:
-            socketio.emit("message:new", payload, to=conversation_room(conversation_id))
+            emit_message_new(message, conversation, created=created)
         return {"code": 200, "message": "发送成功", "data": payload}
     except ChatError as error:
         conversation_data = None
         if error.should_commit:
-            conversation = Conversation.query.get(conversation_id)
+            conversation = error.conversation or Conversation.query.get(conversation_id)
+            close_message = error.close_message
             conversation_data = serialize_conversation(conversation) if conversation else None
             db.session.commit()
             if conversation_data:
-                socketio.emit(
-                    "conversation:closed",
-                    {"conversation": conversation_data},
-                    to=conversation_room(conversation_id),
-                )
+                _emit_closed_events(conversation, close_message)
         else:
             db.session.rollback()
         response = _error_response(error)
