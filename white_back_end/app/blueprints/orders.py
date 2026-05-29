@@ -50,6 +50,22 @@ def _emit_order_chat_message(message, reason=None):
     emit_conversation_updated(conversation, reason=reason, message=message)
 
 
+def _order_participant_usernames(order):
+    return list(
+        dict.fromkeys(
+            username
+            for username in [
+                order.user1,
+                order.user2,
+                order.user3,
+                order.user4,
+                order.driver,
+            ]
+            if username
+        )
+    )
+
+
 @orders_bp.route('/api/orders', methods=['GET'])
 def get_orders():
     orders = Order.query.all()
@@ -193,6 +209,7 @@ def delete_order():
 
     order = Order.query.get_or_404(order_id)
     user_info = User.query.get_or_404(current_user)
+    participant_usernames_before_leave = _order_participant_usernames(order)
     if user_info.usertype == 1:
         users = [order.user1, order.user2, order.user3, order.user4]
 
@@ -237,11 +254,21 @@ def delete_order():
                 db.session.delete(order)
                 db.session.commit()
                 if conversation_id:
-                    emit_conversation_deleted(conversation_id, deleted_order_id)
+                    emit_conversation_deleted(
+                        conversation_id,
+                        deleted_order_id,
+                        usernames=participant_usernames_before_leave,
+                    )
             else:
                 db.session.commit()
                 conversation = _conversation_for_message(system_message)
                 if conversation:
+                    emit_conversation_deleted(
+                        conversation.conversation_id,
+                        order.order_id,
+                        usernames=[current_user],
+                        include_conversation_room=False,
+                    )
                     emit_message_new(system_message, conversation)
                     emit_member_changed(
                         conversation,
@@ -278,10 +305,20 @@ def delete_order():
                 deleted_order_id = None
             db.session.commit()
             if conversation_id:
-                emit_conversation_deleted(conversation_id, deleted_order_id)
+                emit_conversation_deleted(
+                    conversation_id,
+                    deleted_order_id,
+                    usernames=participant_usernames_before_leave,
+                )
             else:
                 conversation = _conversation_for_message(system_message)
                 if conversation:
+                    emit_conversation_deleted(
+                        conversation.conversation_id,
+                        order.order_id,
+                        usernames=[current_user],
+                        include_conversation_room=False,
+                    )
                     emit_message_new(system_message, conversation)
                     emit_member_changed(
                         conversation,

@@ -8,6 +8,7 @@ import com.example.white_web.USERNAME
 import com.example.white_web.chat.local.ChatDao
 import com.example.white_web.chat.local.ChatDatabase
 import com.example.white_web.chat.local.LocalConversationEntity
+import com.example.white_web.chat.local.LocalConversationWithOrder
 import com.example.white_web.chat.local.LocalMessageEntity
 import com.example.white_web.chat.local.LocalOrderChatCacheEntity
 import kotlinx.coroutines.flow.Flow
@@ -17,15 +18,19 @@ import java.util.UUID
 class ChatRepository(
     context: Context,
     private val api: ApiService = APISERVICCE,
-    private val tokenProvider: () -> String? = { TOKEN }
+    private val tokenProvider: () -> String? = { TOKEN },
+    private val ownerProvider: () -> String = { USERNAME.orEmpty() }
 ) {
     private val dao: ChatDao = ChatDatabase.getInstance(context).chatDao()
 
     fun observeVisibleConversations(): Flow<List<LocalConversationEntity>> =
-        dao.observeVisibleConversations()
+        dao.observeVisibleConversations(currentOwner())
+
+    fun observeVisibleConversationRows(): Flow<List<LocalConversationWithOrder>> =
+        dao.observeVisibleConversationRows(currentOwner())
 
     fun observeConversation(conversationId: Int): Flow<LocalConversationEntity?> =
-        dao.observeConversation(conversationId)
+        dao.observeConversation(currentOwner(), conversationId)
 
     fun observeMessages(
         conversationId: Int,
@@ -34,6 +39,22 @@ class ChatRepository(
 
     fun observeOrderCache(conversationId: Int): Flow<LocalOrderChatCacheEntity?> =
         dao.observeOrderCache(conversationId)
+
+    suspend fun refreshAllConversations(): List<LocalConversationEntity> {
+        val conversations = buildList {
+            refreshCurrentConversation()?.let { add(it) }
+            addAll(refreshNotStartedConversations())
+            addAll(refreshHistoryConversations())
+        }.distinctBy { it.conversationId }
+
+        val keepIds = conversations.map { it.conversationId }.toSet()
+        val ownerUsername = currentOwner()
+        dao.getVisibleConversationIds(ownerUsername)
+            .filterNot { it in keepIds }
+            .forEach { dao.deleteConversationCache(ownerUsername, it) }
+
+        return conversations
+    }
 
     suspend fun refreshCurrentConversation(): LocalConversationEntity? {
         val response = api.getCurrentChatConversation(tokenProvider())
@@ -122,6 +143,7 @@ class ChatRepository(
             body.data.conversation.let {
                 dao.upsertConversation(
                     LocalConversationEntity(
+                        ownerUsername = currentOwner(),
                         conversationId = it.conversationId,
                         orderId = it.orderId,
                         status = it.status,
@@ -154,7 +176,7 @@ class ChatRepository(
         if (!response.isSuccessful || body?.code != 200) {
             throw IllegalStateException(body?.message ?: "更新已读位置失败")
         }
-        body.data?.let { dao.updateLastReadSeq(conversationId, it.lastReadSeq) }
+        body.data?.let { dao.updateLastReadSeq(currentOwner(), conversationId, it.lastReadSeq) }
     }
 
     suspend fun clearHistory(conversationId: Int) {
@@ -164,7 +186,7 @@ class ChatRepository(
             throw IllegalStateException(body?.message ?: "清空聊天历史失败")
         }
         body.data?.let {
-            dao.updateClearBeforeSeq(conversationId, it.clearBeforeSeq, it.lastReadSeq)
+            dao.updateClearBeforeSeq(currentOwner(), conversationId, it.clearBeforeSeq, it.lastReadSeq)
             dao.deleteMessagesBefore(conversationId, it.clearBeforeSeq)
         }
     }
@@ -176,13 +198,27 @@ class ChatRepository(
             throw IllegalStateException(body?.message ?: "删除已关闭群聊失败")
         }
         body.data?.let {
-            dao.hideConversationAndDeleteCache(conversationId, it.hiddenAt)
+            dao.hideConversationAndDeleteCache(currentOwner(), conversationId, it.hiddenAt)
         }
+    }
+
+    suspend fun hideAllClosedConversations(): Int {
+        val response = api.hideClosedChatConversations(tokenProvider())
+        val body = response.body()
+        if (!response.isSuccessful || body?.code != 200) {
+            throw IllegalStateException(body?.message ?: "删除历史群聊失败")
+        }
+        val data = body.data ?: return 0
+        data.conversationIds.forEach { conversationId ->
+            dao.hideConversationAndDeleteCache(currentOwner(), conversationId, data.hiddenAt)
+        }
+        return data.hiddenCount
     }
 
     suspend fun cacheConversationItem(item: ChatConversationItem): LocalConversationEntity {
         val now = System.currentTimeMillis()
         val conversation = LocalConversationEntity(
+            ownerUsername = currentOwner(),
             conversationId = item.conversation.conversationId,
             orderId = item.conversation.orderId,
             status = item.conversation.status,
@@ -249,7 +285,8 @@ class ChatRepository(
         conversation: ChatConversationDto,
         message: ChatMessageDto? = null
     ): LocalConversationEntity {
-        val existing = dao.getConversation(conversation.conversationId)
+        val ownerUsername = currentOwner()
+        val existing = dao.getConversation(ownerUsername, conversation.conversationId)
         val isIncomingUserMessage =
             message != null &&
                 message.messageType == MESSAGE_TYPE_USER_TEXT &&
@@ -259,6 +296,7 @@ class ChatRepository(
                 message.seq > (existing?.clearBeforeSeq ?: 0)
 
         val entity = LocalConversationEntity(
+            ownerUsername = ownerUsername,
             conversationId = conversation.conversationId,
             orderId = conversation.orderId,
             status = conversation.status,
@@ -281,8 +319,11 @@ class ChatRepository(
     }
 
     suspend fun deleteConversationCache(conversationId: Int) {
-        dao.deleteConversationCache(conversationId)
+        dao.deleteConversationCache(currentOwner(), conversationId)
     }
+
+    private fun currentOwner(): String =
+        ownerProvider().takeIf { it.isNotBlank() } ?: "未登录"
 
     private fun ChatOrderDto.toLocalOrderCache(updatedAt: Long): LocalOrderChatCacheEntity {
         return LocalOrderChatCacheEntity(

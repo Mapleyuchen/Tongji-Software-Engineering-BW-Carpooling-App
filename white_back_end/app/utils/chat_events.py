@@ -6,6 +6,10 @@ def conversation_room(conversation_id):
     return f"conversation:{conversation_id}"
 
 
+def user_room(username):
+    return f"user:{username}"
+
+
 def emit_message_new(message, conversation, created=True):
     socketio.emit(
         "message:new",
@@ -54,12 +58,21 @@ def emit_conversation_closed(conversation):
     )
 
 
-def emit_conversation_deleted(conversation_id, order_id):
-    socketio.emit(
-        "conversation:deleted",
-        {
-            "conversation_id": conversation_id,
-            "order_id": order_id,
-        },
-        to=conversation_room(conversation_id),
-    )
+def emit_conversation_deleted(
+    conversation_id,
+    order_id,
+    usernames=None,
+    include_conversation_room=True,
+):
+    payload = {
+        "conversation_id": conversation_id,
+        "order_id": order_id,
+    }
+    rooms = set()
+    if include_conversation_room:
+        rooms.add(conversation_room(conversation_id))
+    if usernames:
+        rooms.update(user_room(username) for username in usernames if username)
+
+    for room in rooms:
+        socketio.emit("conversation:deleted", payload, to=room)

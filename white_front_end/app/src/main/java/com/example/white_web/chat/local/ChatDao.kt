@@ -10,11 +10,26 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ChatDao {
-    @Query("SELECT * FROM local_conversation WHERE hiddenAt IS NULL ORDER BY lastMessageTime DESC")
-    fun observeVisibleConversations(): Flow<List<LocalConversationEntity>>
+    @Query(
+        "SELECT * FROM local_conversation " +
+            "WHERE ownerUsername = :ownerUsername AND hiddenAt IS NULL " +
+            "ORDER BY lastMessageTime DESC"
+    )
+    fun observeVisibleConversations(ownerUsername: String): Flow<List<LocalConversationEntity>>
 
-    @Query("SELECT * FROM local_conversation WHERE conversationId = :conversationId LIMIT 1")
-    fun observeConversation(conversationId: Int): Flow<LocalConversationEntity?>
+    @Transaction
+    @Query(
+        "SELECT * FROM local_conversation " +
+            "WHERE ownerUsername = :ownerUsername AND hiddenAt IS NULL " +
+            "ORDER BY lastMessageTime DESC"
+    )
+    fun observeVisibleConversationRows(ownerUsername: String): Flow<List<LocalConversationWithOrder>>
+
+    @Query(
+        "SELECT * FROM local_conversation " +
+            "WHERE ownerUsername = :ownerUsername AND conversationId = :conversationId LIMIT 1"
+    )
+    fun observeConversation(ownerUsername: String, conversationId: Int): Flow<LocalConversationEntity?>
 
     @Query(
         "SELECT * FROM local_message " +
@@ -35,8 +50,11 @@ interface ChatDao {
     @Query("SELECT * FROM local_message WHERE conversationId = :conversationId AND seq = :seq LIMIT 1")
     suspend fun getMessageBySeq(conversationId: Int, seq: Int): LocalMessageEntity?
 
-    @Query("SELECT * FROM local_conversation WHERE conversationId = :conversationId LIMIT 1")
-    suspend fun getConversation(conversationId: Int): LocalConversationEntity?
+    @Query(
+        "SELECT * FROM local_conversation " +
+            "WHERE ownerUsername = :ownerUsername AND conversationId = :conversationId LIMIT 1"
+    )
+    suspend fun getConversation(ownerUsername: String, conversationId: Int): LocalConversationEntity?
 
     @Query("SELECT * FROM local_message WHERE conversationId = :conversationId AND clientMsgId = :clientMsgId LIMIT 1")
     suspend fun getMessageByClientMsgId(conversationId: Int, clientMsgId: String): LocalMessageEntity?
@@ -70,17 +88,30 @@ interface ChatDao {
     )
     suspend fun updateSendStatus(conversationId: Int, clientMsgId: String, sendStatus: Int)
 
-    @Query("UPDATE local_conversation SET lastReadSeq = :lastReadSeq, unreadCount = 0 WHERE conversationId = :conversationId")
-    suspend fun updateLastReadSeq(conversationId: Int, lastReadSeq: Int)
+    @Query(
+        "UPDATE local_conversation SET lastReadSeq = :lastReadSeq, unreadCount = 0 " +
+            "WHERE ownerUsername = :ownerUsername AND conversationId = :conversationId"
+    )
+    suspend fun updateLastReadSeq(ownerUsername: String, conversationId: Int, lastReadSeq: Int)
 
     @Query(
         "UPDATE local_conversation SET clearBeforeSeq = :clearBeforeSeq, " +
-            "lastReadSeq = :lastReadSeq, unreadCount = 0 WHERE conversationId = :conversationId"
+            "lastReadSeq = :lastReadSeq, unreadCount = 0, " +
+            "lastMessageContent = NULL, lastMessageTime = NULL " +
+            "WHERE ownerUsername = :ownerUsername AND conversationId = :conversationId"
     )
-    suspend fun updateClearBeforeSeq(conversationId: Int, clearBeforeSeq: Int, lastReadSeq: Int)
+    suspend fun updateClearBeforeSeq(
+        ownerUsername: String,
+        conversationId: Int,
+        clearBeforeSeq: Int,
+        lastReadSeq: Int
+    )
 
-    @Query("UPDATE local_conversation SET hiddenAt = :hiddenAt WHERE conversationId = :conversationId")
-    suspend fun updateHiddenAt(conversationId: Int, hiddenAt: String)
+    @Query(
+        "UPDATE local_conversation SET hiddenAt = :hiddenAt " +
+            "WHERE ownerUsername = :ownerUsername AND conversationId = :conversationId"
+    )
+    suspend fun updateHiddenAt(ownerUsername: String, conversationId: Int, hiddenAt: String)
 
     @Query("DELETE FROM local_message WHERE conversationId = :conversationId AND seq <= :clearBeforeSeq")
     suspend fun deleteMessagesBefore(conversationId: Int, clearBeforeSeq: Int)
@@ -88,23 +119,36 @@ interface ChatDao {
     @Query("DELETE FROM local_message WHERE conversationId = :conversationId")
     suspend fun deleteMessages(conversationId: Int)
 
-    @Query("DELETE FROM local_conversation WHERE conversationId = :conversationId")
-    suspend fun deleteConversation(conversationId: Int)
+    @Query("DELETE FROM local_conversation WHERE ownerUsername = :ownerUsername AND conversationId = :conversationId")
+    suspend fun deleteConversation(ownerUsername: String, conversationId: Int)
+
+    @Query("SELECT COUNT(*) FROM local_conversation WHERE conversationId = :conversationId")
+    suspend fun countConversationOwners(conversationId: Int): Int
+
+    @Query(
+        "SELECT conversationId FROM local_conversation " +
+            "WHERE ownerUsername = :ownerUsername AND hiddenAt IS NULL"
+    )
+    suspend fun getVisibleConversationIds(ownerUsername: String): List<Int>
 
     @Query("DELETE FROM local_order_chat_cache WHERE conversationId = :conversationId")
     suspend fun deleteOrderCacheByConversation(conversationId: Int)
 
     @Transaction
-    suspend fun deleteConversationCache(conversationId: Int) {
-        deleteMessages(conversationId)
-        deleteOrderCacheByConversation(conversationId)
-        deleteConversation(conversationId)
+    suspend fun deleteConversationCache(ownerUsername: String, conversationId: Int) {
+        deleteConversation(ownerUsername, conversationId)
+        if (countConversationOwners(conversationId) == 0) {
+            deleteMessages(conversationId)
+            deleteOrderCacheByConversation(conversationId)
+        }
     }
 
     @Transaction
-    suspend fun hideConversationAndDeleteCache(conversationId: Int, hiddenAt: String) {
-        updateHiddenAt(conversationId, hiddenAt)
-        deleteMessages(conversationId)
-        deleteOrderCacheByConversation(conversationId)
+    suspend fun hideConversationAndDeleteCache(ownerUsername: String, conversationId: Int, hiddenAt: String) {
+        updateHiddenAt(ownerUsername, conversationId, hiddenAt)
+        if (countConversationOwners(conversationId) <= 1) {
+            deleteMessages(conversationId)
+            deleteOrderCacheByConversation(conversationId)
+        }
     }
 }

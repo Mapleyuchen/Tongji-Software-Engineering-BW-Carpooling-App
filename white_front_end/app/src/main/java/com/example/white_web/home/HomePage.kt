@@ -127,6 +127,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -139,6 +140,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.white_web.APISERVICCE
+import com.example.white_web.R
 import com.example.white_web.USERTYPE
 import com.example.white_web.map.GDMapMarker
 import com.example.white_web.map.calculateDrivingDistanceMeters
@@ -566,11 +568,34 @@ fun HomePage(
                     Icon(Icons.Default.Search, contentDescription = "搜索", modifier = Modifier.size(26.dp), tint = NeonCyan)
                 }
             }
-            // 正在进行的订单 - 在搜索图标的左侧
+            // 聊天列表 - 在搜索图标的左侧
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(end = 80.dp, top = 18.dp)
+                    .alpha(buttonsAlpha)
+            ) {
+                FloatingActionButton(
+                    onClick = { navController?.navigate("chatList") },
+                    modifier = Modifier.size(50.dp),
+                    shape = CircleShape,
+                    containerColor = Color(0xCCFFFFFF),
+                    contentColor = Color(0xFF1296DB),
+                    elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 8.dp, pressedElevation = 12.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_chat_bubble),
+                        contentDescription = "聊天列表",
+                        modifier = Modifier.size(26.dp),
+                        tint = Color(0xFF1296DB)
+                    )
+                }
+            }
+            // 正在进行的订单 - 在聊天图标的左侧
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = 142.dp, top = 18.dp)
                     .alpha(buttonsAlpha)
             ) {
                 FloatingActionButton(
@@ -588,7 +613,7 @@ fun HomePage(
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(end = 142.dp, top = 18.dp)
+                    .padding(end = 204.dp, top = 18.dp)
                     .alpha(buttonsAlpha)
             ) {
                 FloatingActionButton(

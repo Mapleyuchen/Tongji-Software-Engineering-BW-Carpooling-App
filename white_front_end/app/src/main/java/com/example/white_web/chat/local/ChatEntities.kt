@@ -3,11 +3,18 @@ package com.example.white_web.chat.local
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import androidx.room.Relation
+import androidx.room.Embedded
 
 
-@Entity(tableName = "local_conversation")
+@Entity(
+    tableName = "local_conversation",
+    primaryKeys = ["ownerUsername", "conversationId"],
+    indices = [Index(value = ["conversationId"])]
+)
 data class LocalConversationEntity(
-    @PrimaryKey val conversationId: Int,
+    val ownerUsername: String,
+    val conversationId: Int,
     val orderId: Int,
     val status: Int,
     val lastSeq: Int,
@@ -69,4 +76,19 @@ data class LocalOrderChatCacheEntity(
     val driverArrived: Boolean,
     val completedAt: String?,
     val updatedAt: Long
+)
+
+
+data class LocalConversationWithOrder(
+    @Embedded val conversation: LocalConversationEntity,
+    @Relation(
+        parentColumn = "orderId",
+        entityColumn = "orderId"
+    )
+    val order: LocalOrderChatCacheEntity?,
+    @Relation(
+        parentColumn = "conversationId",
+        entityColumn = "conversationId"
+    )
+    val messages: List<LocalMessageEntity>
 )

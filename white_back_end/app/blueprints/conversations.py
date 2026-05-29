@@ -497,3 +497,41 @@ def hide_closed_chat_conversation(conversation_id):
     except ChatError as error:
         db.session.rollback()
         return jsonify({"code": error.code, "message": error.message}), error.status_code
+
+
+@conversations_bp.route("/api/chat/conversations/history/hide", methods=["POST"])
+def hide_all_closed_chat_conversations():
+    username, error_response = _current_username_or_response()
+    if error_response:
+        return error_response
+
+    _close_due_conversations()
+
+    hidden_at = datetime.datetime.now()
+    rows = (
+        db.session.query(ConversationMember)
+        .join(
+            Conversation,
+            Conversation.conversation_id == ConversationMember.conversation_id,
+        )
+        .filter(
+            ConversationMember.username == username,
+            ConversationMember.hidden_at.is_(None),
+            Conversation.status == CONVERSATION_STATUS_CLOSED,
+        )
+        .all()
+    )
+
+    conversation_ids = [row.conversation_id for row in rows]
+    for row in rows:
+        row.hidden_at = hidden_at
+
+    db.session.commit()
+    return _json_success(
+        {
+            "hidden_at": hidden_at.isoformat(),
+            "hidden_count": len(conversation_ids),
+            "conversation_ids": conversation_ids,
+        },
+        message="Closed conversations hidden",
+    )

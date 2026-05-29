@@ -19,6 +19,7 @@ import com.example.white_web.chat.ChatConversationResponse
 import com.example.white_web.chat.ChatMessageListResponse
 import com.example.white_web.chat.ClearChatHistoryResponse
 import com.example.white_web.chat.HideChatConversationResponse
+import com.example.white_web.chat.HideClosedChatConversationsResponse
 import com.example.white_web.chat.MarkChatReadRequest
 import com.example.white_web.chat.MarkChatReadResponse
 import com.example.white_web.chat.SendChatMessageRequest
@@ -509,6 +510,11 @@ interface ApiService {
         @Path("conversation_id") conversationId: Int,
         @Header("Authorization") token: String? = TOKEN
     ): Response<HideChatConversationResponse>
+
+    @POST("/api/chat/conversations/history/hide")
+    suspend fun hideClosedChatConversations(
+        @Header("Authorization") token: String? = TOKEN
+    ): Response<HideClosedChatConversationsResponse>
 
     // 车辆管理接口
     @POST("/api/vehicle/add")

@@ -19,6 +19,7 @@ from app.utils.chat_events import (
     emit_conversation_closed,
     emit_conversation_updated,
     emit_message_new,
+    user_room,
 )
 
 
@@ -99,6 +100,7 @@ def handle_connect(auth):
         return False
 
     _sid_to_username[request.sid] = username
+    join_room(user_room(username))
     emit("connected", {"code": 200, "message": "连接成功", "data": {"username": username}})
 
 

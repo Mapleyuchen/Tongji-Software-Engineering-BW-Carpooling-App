@@ -187,3 +187,18 @@ data class HideChatConversationData(
     @SerializedName("hidden_at")
     val hiddenAt: String
 )
+
+data class HideClosedChatConversationsResponse(
+    val code: Int,
+    val message: String,
+    val data: HideClosedChatConversationsData?
+)
+
+data class HideClosedChatConversationsData(
+    @SerializedName("hidden_at")
+    val hiddenAt: String,
+    @SerializedName("hidden_count")
+    val hiddenCount: Int,
+    @SerializedName("conversation_ids")
+    val conversationIds: List<Int>
+)

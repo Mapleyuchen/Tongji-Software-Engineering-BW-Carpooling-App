@@ -16,6 +16,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navigation
 import com.amap.api.location.AMapLocationClient
+import com.example.white_web.chat.ChatListScreen
 import com.example.white_web.home.CurrentOrdersScreen
 import com.example.white_web.home.CurrentOrdersViewModel
 import com.example.white_web.home.HomePage
@@ -91,6 +92,9 @@ fun AppNavigation() {
         }
         composable("vehicleManagement") {
             VehicleManagementScreen(mainNavController)
+        }
+        composable("chatList") {
+            ChatListScreen(mainNavController)
         }
     }
 }
