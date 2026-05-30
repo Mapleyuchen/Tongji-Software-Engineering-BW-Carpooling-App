@@ -33,8 +33,9 @@ interface ChatDao {
 
     @Query(
         "SELECT * FROM local_message " +
-            "WHERE conversationId = :conversationId AND seq > :clearBeforeSeq " +
-            "ORDER BY seq ASC, localCreatedAt ASC"
+            "WHERE conversationId = :conversationId " +
+            "AND ((seq IS NOT NULL AND seq > :clearBeforeSeq) OR seq IS NULL) " +
+            "ORDER BY CASE WHEN seq IS NULL THEN 1 ELSE 0 END ASC, seq ASC, localCreatedAt ASC"
     )
     fun observeMessages(
         conversationId: Int,
@@ -113,7 +114,10 @@ interface ChatDao {
     )
     suspend fun updateHiddenAt(ownerUsername: String, conversationId: Int, hiddenAt: String)
 
-    @Query("DELETE FROM local_message WHERE conversationId = :conversationId AND seq <= :clearBeforeSeq")
+    @Query(
+        "DELETE FROM local_message " +
+            "WHERE conversationId = :conversationId AND seq IS NOT NULL AND seq <= :clearBeforeSeq"
+    )
     suspend fun deleteMessagesBefore(conversationId: Int, clearBeforeSeq: Int)
 
     @Query("DELETE FROM local_message WHERE conversationId = :conversationId")

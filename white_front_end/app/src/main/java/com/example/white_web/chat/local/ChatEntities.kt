@@ -40,7 +40,7 @@ data class LocalMessageEntity(
     @PrimaryKey(autoGenerate = true) val localId: Long = 0,
     val serverMessageId: Long?,
     val conversationId: Int,
-    val seq: Int,
+    val seq: Int?,
     val senderUsername: String?,
     val messageType: Int,
     val content: String,

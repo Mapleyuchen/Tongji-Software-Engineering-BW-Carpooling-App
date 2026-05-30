@@ -134,8 +134,8 @@ class ChatListViewModel(application: Application) : AndroidViewModel(application
                 ChatConversationListItem(
                     row = row,
                     latestMessage = row.messages
-                        .filter { it.seq > row.conversation.clearBeforeSeq && it.seq > 0 }
-                        .maxByOrNull { it.seq }
+                        .filter { (it.seq ?: 0) > row.conversation.clearBeforeSeq }
+                        .maxByOrNull { it.seq ?: 0 }
                 )
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -296,6 +296,7 @@ fun ChatListScreen(navController: NavHostController, viewModel: ChatListViewMode
                     items = items,
                     loadFailed = loadFailed,
                     refreshNonce = refreshNonce,
+                    onOpen = { conversationId -> navController.navigate("chat/$conversationId") },
                     onClear = { viewModel.clearConversation(it) },
                     onHide = { viewModel.hideClosedConversation(it) },
                     onHideAllHistory = { viewModel.hideAllClosedConversations() }
@@ -436,6 +437,7 @@ private fun ConversationDisplayColumn(
     refreshNonce: Int,
     onClear: (Int) -> Unit,
     onHide: (Int) -> Unit,
+    onOpen: (Int) -> Unit,
     onHideAllHistory: () -> Unit
 ) {
     var deleteAllConfirming by remember(selectedFilter, loadFailed, refreshNonce) { mutableStateOf(false) }
@@ -470,6 +472,7 @@ private fun ConversationDisplayColumn(
                 item = item,
                 selectedFilter = selectedFilter,
                 resetKey = refreshNonce,
+                onOpen = onOpen,
                 onClear = onClear,
                 onHide = onHide
             )
@@ -522,6 +525,7 @@ private fun ConversationItem(
     item: ChatConversationListItem,
     selectedFilter: ChatListFilter,
     resetKey: Int,
+    onOpen: (Int) -> Unit,
     onClear: (Int) -> Unit,
     onHide: (Int) -> Unit
 ) {
@@ -561,7 +565,14 @@ private fun ConversationItem(
         ConversationBox(
             modifier = Modifier
                 .offset(x = -deleteWidth)
-                .fillMaxWidth(),
+                .fillMaxWidth()
+                .clickable(
+                    enabled = deleteWidthPx == 0f,
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    onOpen(item.row.conversation.conversationId)
+                },
             item = item
         )
 

@@ -105,22 +105,37 @@ class ChatRepository(
 
     suspend fun sendTextMessage(conversationId: Int, content: String): LocalMessageEntity {
         val clientMsgId = UUID.randomUUID().toString()
-        val now = System.currentTimeMillis()
-        dao.insertMessage(
-            LocalMessageEntity(
-                serverMessageId = null,
-                conversationId = conversationId,
-                seq = 0,
-                senderUsername = USERNAME,
-                messageType = MESSAGE_TYPE_USER_TEXT,
-                content = content,
-                clientMsgId = clientMsgId,
-                sendStatus = SEND_STATUS_SENDING,
-                createdAt = null,
-                localCreatedAt = now
-            )
-        )
+        createPendingTextMessage(conversationId, content, clientMsgId)
+        return submitTextMessage(conversationId, content, clientMsgId)
+    }
 
+    suspend fun createPendingTextMessage(
+        conversationId: Int,
+        content: String,
+        clientMsgId: String = UUID.randomUUID().toString()
+    ): LocalMessageEntity {
+        val now = System.currentTimeMillis()
+        val message = LocalMessageEntity(
+            serverMessageId = null,
+            conversationId = conversationId,
+            seq = null,
+            senderUsername = USERNAME,
+            messageType = MESSAGE_TYPE_USER_TEXT,
+            content = content,
+            clientMsgId = clientMsgId,
+            sendStatus = SEND_STATUS_SENDING,
+            createdAt = null,
+            localCreatedAt = now
+        )
+        val localId = dao.insertMessage(message)
+        return message.copy(localId = localId)
+    }
+
+    suspend fun submitTextMessage(
+        conversationId: Int,
+        content: String,
+        clientMsgId: String
+    ): LocalMessageEntity {
         return try {
             val response = api.sendChatMessage(
                 conversationId = conversationId,
@@ -164,6 +179,14 @@ class ChatRepository(
             dao.updateSendStatus(conversationId, clientMsgId, SEND_STATUS_FAILED)
             throw error
         }
+    }
+
+    suspend fun markMessageUnknown(conversationId: Int, clientMsgId: String) {
+        dao.updateSendStatus(conversationId, clientMsgId, SEND_STATUS_UNKNOWN)
+    }
+
+    suspend fun markMessageSending(conversationId: Int, clientMsgId: String) {
+        dao.updateSendStatus(conversationId, clientMsgId, SEND_STATUS_SENDING)
     }
 
     suspend fun markRead(conversationId: Int, lastReadSeq: Int? = null) {
@@ -359,5 +382,6 @@ class ChatRepository(
         const val SEND_STATUS_SENDING = 0
         const val SEND_STATUS_SENT = 1
         const val SEND_STATUS_FAILED = 2
+        const val SEND_STATUS_UNKNOWN = 3
     }
 }

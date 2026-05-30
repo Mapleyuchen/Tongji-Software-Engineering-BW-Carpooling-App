@@ -17,6 +17,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navigation
 import com.amap.api.location.AMapLocationClient
 import com.example.white_web.chat.ChatListScreen
+import com.example.white_web.chat.ChatMessageScreen
 import com.example.white_web.home.CurrentOrdersScreen
 import com.example.white_web.home.CurrentOrdersViewModel
 import com.example.white_web.home.HomePage
@@ -95,6 +96,14 @@ fun AppNavigation() {
         }
         composable("chatList") {
             ChatListScreen(mainNavController)
+        }
+        composable("chat/{conversationId}") { backStackEntry ->
+            val conversationId = backStackEntry.arguments
+                ?.getString("conversationId")
+                ?.toIntOrNull()
+            if (conversationId != null) {
+                ChatMessageScreen(mainNavController, conversationId)
+            }
         }
     }
 }
