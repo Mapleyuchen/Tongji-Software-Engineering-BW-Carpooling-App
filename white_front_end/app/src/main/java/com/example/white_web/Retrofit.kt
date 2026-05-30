@@ -16,6 +16,7 @@ import com.example.white_web.home.LookResponse
 import com.example.white_web.home.OrderIdRequest
 import com.example.white_web.chat.ChatConversationListResponse
 import com.example.white_web.chat.ChatConversationResponse
+import com.example.white_web.chat.ChatMemberPhoneResponse
 import com.example.white_web.chat.ChatMessageListResponse
 import com.example.white_web.chat.ClearChatHistoryResponse
 import com.example.white_web.chat.HideChatConversationResponse
@@ -484,6 +485,13 @@ interface ApiService {
         @Query("after_seq") afterSeq: Int = 0,
         @Header("Authorization") token: String? = TOKEN
     ): Response<ChatMessageListResponse>
+
+    @GET("/api/chat/conversations/{conversation_id}/members/{username}/phone")
+    suspend fun getChatConversationMemberPhone(
+        @Path("conversation_id") conversationId: Int,
+        @Path("username") username: String,
+        @Header("Authorization") token: String? = TOKEN
+    ): Response<ChatMemberPhoneResponse>
 
     @POST("/api/chat/conversations/{conversation_id}/messages")
     suspend fun sendChatMessage(

@@ -4,7 +4,7 @@ import jwt
 from flask import Blueprint, jsonify, request
 
 from app.extensions import db
-from app.models import Conversation, ConversationMember, Message, Order, OrderStatus
+from app.models import Conversation, ConversationMember, Message, Order, OrderStatus, User
 from app.utils.auth import check_token
 from app.utils.chat import (
     CONVERSATION_STATUS_CLOSED,
@@ -351,6 +351,49 @@ def get_chat_messages(conversation_id):
             .all()
         )
         return _json_success({"list": [serialize_message(message) for message in messages]})
+    except ChatError as error:
+        return jsonify({"code": error.code, "message": error.message}), error.status_code
+
+
+@conversations_bp.route(
+    "/api/chat/conversations/<int:conversation_id>/members/<string:target_username>/phone",
+    methods=["GET"],
+)
+def get_conversation_member_phone(conversation_id, target_username):
+    username, error_response = _current_username_or_response()
+    if error_response:
+        return error_response
+
+    try:
+        require_member(conversation_id, username)
+        conversation = Conversation.query.get(conversation_id)
+        if not conversation:
+            return jsonify({"code": 404, "message": "群聊不存在"}), 404
+
+        order = Order.query.get(conversation.order_id)
+        if not order:
+            return jsonify({"code": 404, "message": "订单不存在"}), 404
+
+        participant_usernames = {
+            order.user1,
+            order.user2,
+            order.user3,
+            order.user4,
+            order.driver,
+        }
+        if target_username not in participant_usernames:
+            return jsonify({"code": 403, "message": "目标用户不在该订单中"}), 403
+
+        target_user = User.query.get(target_username)
+        if not target_user:
+            return jsonify({"code": 404, "message": "用户不存在"}), 404
+
+        return _json_success(
+            {
+                "username": target_user.username,
+                "phonenumber": target_user.phonenumber,
+            }
+        )
     except ChatError as error:
         return jsonify({"code": error.code, "message": error.message}), error.status_code
 

@@ -40,6 +40,19 @@ class ChatRepository(
     fun observeOrderCache(conversationId: Int): Flow<LocalOrderChatCacheEntity?> =
         dao.observeOrderCache(conversationId)
 
+    suspend fun fetchMemberPhone(conversationId: Int, username: String): String {
+        val response = api.getChatConversationMemberPhone(
+            conversationId = conversationId,
+            username = username,
+            token = tokenProvider()
+        )
+        val body = response.body()
+        if (!response.isSuccessful || body?.code != 200) {
+            throw IllegalStateException(body?.message ?: "获取手机号失败")
+        }
+        return body.data?.phonenumber ?: throw IllegalStateException("手机号为空")
+    }
+
     suspend fun refreshAllConversations(): List<LocalConversationEntity> {
         val conversations = buildList {
             refreshCurrentConversation()?.let { add(it) }

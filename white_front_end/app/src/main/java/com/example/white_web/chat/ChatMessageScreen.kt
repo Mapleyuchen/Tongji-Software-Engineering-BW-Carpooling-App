@@ -1,6 +1,10 @@
 package com.example.white_web.chat
 
 import android.app.Application
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -110,6 +114,12 @@ private sealed class MessageDisplayRow {
 }
 
 
+private data class PhoneCallConfirmation(
+    val username: String,
+    val phoneNumber: String
+)
+
+
 class ChatMessageViewModel(
     application: Application,
     private val conversationId: Int
@@ -153,6 +163,18 @@ class ChatMessageViewModel(
     fun cleanupClosedConversation() {
         viewModelScope.launch {
             runCatching { repository.closeConversationCache(conversationId) }
+        }
+    }
+
+    fun fetchPhoneNumber(
+        username: String,
+        onSuccess: (String) -> Unit,
+        onFailure: () -> Unit
+    ) {
+        viewModelScope.launch {
+            runCatching { repository.fetchMemberPhone(conversationId, username) }
+                .onSuccess(onSuccess)
+                .onFailure { onFailure() }
         }
     }
 
@@ -210,6 +232,21 @@ fun ChatMessageScreen(
         factory = chatMessageViewModelFactory(application, conversationId)
     )
     val uiState by viewModel.uiState.collectAsState()
+    var membersExpanded by remember { mutableStateOf(false) }
+    var phoneConfirmation by remember { mutableStateOf<PhoneCallConfirmation?>(null) }
+
+    val requestPhone: (String) -> Unit = { username ->
+        viewModel.fetchPhoneNumber(
+            username = username,
+            onSuccess = { phone ->
+                phoneConfirmation = PhoneCallConfirmation(username, phone)
+                membersExpanded = false
+            },
+            onFailure = {
+                Toast.makeText(context, "网络未连接", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
 
     LaunchedEffect(conversationId) {
         ChatSocketManager.connect(context)
@@ -232,30 +269,56 @@ fun ChatMessageScreen(
         }
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(ChatPageBackground)
     ) {
-        ChatOrderTopBar(
-            order = uiState.order,
-            onBack = { navController.popBackStack() }
-        )
+        Column(modifier = Modifier.fillMaxSize()) {
+            ChatOrderTopBar(
+                order = uiState.order,
+                membersExpanded = membersExpanded,
+                onBack = { navController.popBackStack() },
+                onMembersClick = { membersExpanded = !membersExpanded }
+            )
 
-        MessageList(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .background(ChatContentBackground),
-            messages = uiState.messages,
-            conversationClosed = uiState.conversation?.status == CONVERSATION_CLOSED,
-            onRetry = viewModel::retry
-        )
+            MessageList(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .background(ChatContentBackground),
+                messages = uiState.messages,
+                conversationClosed = uiState.conversation?.status == CONVERSATION_CLOSED,
+                onRetry = viewModel::retry
+            )
 
-        if (uiState.conversation?.status == CONVERSATION_CLOSED) {
-            ClosedInputBar()
-        } else {
-            MessageInputBar(onSend = viewModel::send)
+            if (uiState.conversation?.status == CONVERSATION_CLOSED) {
+                ClosedInputBar()
+            } else {
+                MessageInputBar(onSend = viewModel::send)
+            }
+        }
+
+        if (membersExpanded && phoneConfirmation == null) {
+            FloatingMemberList(
+                order = uiState.order,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(top = 124.dp, end = 8.dp),
+                onPhoneClick = requestPhone
+            )
+        }
+
+        phoneConfirmation?.let { confirmation ->
+            PhoneCallConfirmOverlay(
+                confirmation = confirmation,
+                onConfirm = {
+                    phoneConfirmation = null
+                    dialPhone(context, confirmation.phoneNumber)
+                },
+                onCancel = { phoneConfirmation = null }
+            )
         }
     }
 }
@@ -277,7 +340,9 @@ private fun chatMessageViewModelFactory(
 @Composable
 private fun ChatOrderTopBar(
     order: LocalOrderChatCacheEntity?,
-    onBack: () -> Unit
+    membersExpanded: Boolean,
+    onBack: () -> Unit,
+    onMembersClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -387,13 +452,253 @@ private fun ChatOrderTopBar(
             }
         }
 
-        IconButton(onClick = {}, modifier = Modifier.size(42.dp)) {
+        IconButton(onClick = onMembersClick, modifier = Modifier.size(42.dp)) {
             Icon(
                 imageVector = Icons.Default.Person,
                 contentDescription = "群聊成员",
-                tint = ChatAccent
+                tint = if (membersExpanded) ChatAccent.copy(alpha = 0.65f) else ChatAccent
             )
         }
+    }
+}
+
+
+@Composable
+private fun FloatingMemberList(
+    order: LocalOrderChatCacheEntity?,
+    modifier: Modifier,
+    onPhoneClick: (String) -> Unit
+) {
+    val passengers = remember(order) {
+        listOfNotNull(order?.user1, order?.user2, order?.user3, order?.user4)
+    }
+    val driver = order?.driver
+    val currentUserIsDriver = driver == USERNAME
+
+    Column(
+        modifier = modifier
+            .width(280.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(ChatPageBackground)
+            .border(1.dp, ChatAccent, RoundedCornerShape(14.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        MemberSectionTitle("乘客")
+        if (passengers.isEmpty()) {
+            EmptyMemberText("当前暂未有乘客拼单")
+        } else {
+            passengers.forEach { passenger ->
+                MemberRow(
+                    username = passenger,
+                    trailing = {
+                        when {
+                            passenger == USERNAME -> SelfTag()
+                            currentUserIsDriver -> PhoneButton { onPhoneClick(passenger) }
+                        }
+                    }
+                )
+            }
+        }
+
+        MemberSectionTitle("司机")
+        if (driver.isNullOrBlank()) {
+            EmptyMemberText("当前暂未有司机接单")
+        } else {
+            MemberRow(
+                username = driver,
+                trailing = {
+                    if (currentUserIsDriver) {
+                        SelfTag()
+                    } else {
+                        PhoneButton { onPhoneClick(driver) }
+                    }
+                }
+            )
+        }
+    }
+}
+
+
+@Composable
+private fun MemberSectionTitle(text: String) {
+    Text(
+        text = text,
+        color = ChatAccent,
+        fontSize = 16.sp,
+        fontWeight = FontWeight.Bold
+    )
+}
+
+
+@Composable
+private fun EmptyMemberText(text: String) {
+    Text(
+        text = text,
+        color = MutedText,
+        fontSize = 18.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+    )
+}
+
+
+@Composable
+private fun MemberRow(
+    username: String,
+    trailing: @Composable () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(42.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = username,
+            color = Color.Black,
+            fontSize = 22.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Box(
+            modifier = Modifier.width(48.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            trailing()
+        }
+    }
+}
+
+
+@Composable
+private fun SelfTag() {
+    Text(text = "(我)", color = MutedText, fontSize = 18.sp, maxLines = 1)
+}
+
+
+@Composable
+private fun PhoneButton(onClick: () -> Unit) {
+    Image(
+        painter = painterResource(id = R.drawable.ic_chat_phone),
+        contentDescription = "拨打电话",
+        modifier = Modifier
+            .size(34.dp)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+    )
+}
+
+
+@Composable
+private fun PhoneCallConfirmOverlay(
+    confirmation: PhoneCallConfirmation,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0x66000000))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {}
+            )
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 0.dp, vertical = 0.dp),
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                .background(ChatPageBackground)
+                .border(
+                    1.dp,
+                    ChatAccent,
+                    RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+                )
+                .padding(bottom = 18.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 20.dp, bottom = 16.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.ic_chat_call_confirm),
+                    contentDescription = null,
+                    modifier = Modifier.size(width = 30.dp, height = 29.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(text = "拨打电话", color = ChatAccent, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            }
+
+            ConfirmLine(text = formatPhoneNumber(confirmation.phoneNumber), emphasized = true)
+            ConfirmLine(
+                text = "确认",
+                emphasized = false,
+                color = ChatAccent,
+                onClick = onConfirm
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(54.dp)
+                    .clickable(onClick = onCancel),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(text = "取消", color = MutedText, fontSize = 18.sp)
+            }
+        }
+    }
+}
+
+
+@Composable
+private fun ConfirmLine(
+    text: String,
+    emphasized: Boolean,
+    color: Color = Color.Black,
+    onClick: (() -> Unit)? = null
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(58.dp)
+            .clickable(enabled = onClick != null) { onClick?.invoke() }
+            .border(width = 0.dp, color = Color.Transparent)
+            .padding(horizontal = 18.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = color,
+            fontSize = if (emphasized) 22.sp else 18.sp,
+            fontWeight = if (emphasized) FontWeight.Bold else FontWeight.Normal,
+            maxLines = 1
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .align(Alignment.BottomCenter)
+                .background(ChatAccent.copy(alpha = 0.55f))
+        )
     }
 }
 
@@ -817,4 +1122,21 @@ private fun formatMessageTimestamp(time: LocalDateTime): String {
     }
 
     return "${date.year}-${date.monthValue}-${date.dayOfMonth} $hm"
+}
+
+
+private fun formatPhoneNumber(phoneNumber: String): String {
+    val digits = phoneNumber.filter { it.isDigit() }
+    return if (digits.length == 11) {
+        "${digits.substring(0, 3)}-${digits.substring(3, 7)}-${digits.substring(7, 11)}"
+    } else {
+        phoneNumber
+    }
+}
+
+
+private fun dialPhone(context: Context, phoneNumber: String) {
+    val digits = phoneNumber.filter { it.isDigit() }
+    val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$digits"))
+    context.startActivity(intent)
 }

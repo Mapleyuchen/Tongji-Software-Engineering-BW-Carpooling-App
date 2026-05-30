@@ -202,3 +202,14 @@ data class HideClosedChatConversationsData(
     @SerializedName("conversation_ids")
     val conversationIds: List<Int>
 )
+
+data class ChatMemberPhoneResponse(
+    val code: Int,
+    val message: String,
+    val data: ChatMemberPhoneData?
+)
+
+data class ChatMemberPhoneData(
+    val username: String,
+    val phonenumber: String
+)
