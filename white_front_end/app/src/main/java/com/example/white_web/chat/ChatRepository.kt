@@ -189,6 +189,15 @@ class ChatRepository(
         dao.updateSendStatus(conversationId, clientMsgId, SEND_STATUS_SENDING)
     }
 
+    suspend fun closeConversationCache(conversationId: Int) {
+        dao.deleteUnconfirmedMessages(
+            conversationId = conversationId,
+            sentStatus = SEND_STATUS_SENT
+        )
+        runCatching { refreshConversationDetail(conversationId) }
+        runCatching { refreshMessages(conversationId) }
+    }
+
     suspend fun markRead(conversationId: Int, lastReadSeq: Int? = null) {
         val response = api.markChatRead(
             conversationId = conversationId,

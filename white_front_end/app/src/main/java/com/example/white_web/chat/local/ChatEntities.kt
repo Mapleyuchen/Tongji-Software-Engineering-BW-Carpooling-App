@@ -32,8 +32,8 @@ data class LocalConversationEntity(
 @Entity(
     tableName = "local_message",
     indices = [
-        Index(value = ["conversationId", "seq"]),
-        Index(value = ["conversationId", "clientMsgId"])
+        Index(value = ["conversationId", "seq"], unique = true),
+        Index(value = ["conversationId", "clientMsgId"], unique = true)
     ]
 )
 data class LocalMessageEntity(

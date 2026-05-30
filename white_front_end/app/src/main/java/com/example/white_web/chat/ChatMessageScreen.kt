@@ -139,7 +139,20 @@ class ChatMessageViewModel(
             runCatching {
                 repository.refreshConversationDetail(conversationId)
                 repository.refreshMessages(conversationId)
+                repository.markRead(conversationId)
             }
+        }
+    }
+
+    fun markRead() {
+        viewModelScope.launch {
+            runCatching { repository.markRead(conversationId) }
+        }
+    }
+
+    fun cleanupClosedConversation() {
+        viewModelScope.launch {
+            runCatching { repository.closeConversationCache(conversationId) }
         }
     }
 
@@ -203,6 +216,16 @@ fun ChatMessageScreen(
         ChatSocketManager.joinConversation(context, conversationId)
         viewModel.refresh()
     }
+    LaunchedEffect(uiState.conversation?.lastSeq, uiState.messages.count { it.seq != null }) {
+        if ((uiState.conversation?.lastSeq ?: 0) > 0) {
+            viewModel.markRead()
+        }
+    }
+    LaunchedEffect(uiState.conversation?.status) {
+        if (uiState.conversation?.status == CONVERSATION_CLOSED) {
+            viewModel.cleanupClosedConversation()
+        }
+    }
     DisposableEffect(conversationId) {
         onDispose {
             ChatSocketManager.leaveConversation(context, conversationId)
@@ -225,6 +248,7 @@ fun ChatMessageScreen(
                 .fillMaxWidth()
                 .background(ChatContentBackground),
             messages = uiState.messages,
+            conversationClosed = uiState.conversation?.status == CONVERSATION_CLOSED,
             onRetry = viewModel::retry
         )
 
@@ -378,9 +402,17 @@ private fun ChatOrderTopBar(
 private fun MessageList(
     modifier: Modifier,
     messages: List<LocalMessageEntity>,
+    conversationClosed: Boolean,
     onRetry: (LocalMessageEntity) -> Unit
 ) {
-    val rows = remember(messages) { buildDisplayRows(messages) }
+    val visibleMessages = remember(messages, conversationClosed) {
+        if (conversationClosed) {
+            messages.filterNot { it.seq == null && it.sendStatus != ChatRepository.SEND_STATUS_SENT }
+        } else {
+            messages
+        }
+    }
+    val rows = remember(visibleMessages) { buildDisplayRows(visibleMessages) }
     val listState = rememberLazyListState()
 
     LaunchedEffect(rows.size) {

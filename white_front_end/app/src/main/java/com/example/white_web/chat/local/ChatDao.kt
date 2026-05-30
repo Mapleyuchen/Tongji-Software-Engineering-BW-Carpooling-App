@@ -123,6 +123,17 @@ interface ChatDao {
     @Query("DELETE FROM local_message WHERE conversationId = :conversationId")
     suspend fun deleteMessages(conversationId: Int)
 
+    @Query(
+        "DELETE FROM local_message " +
+            "WHERE conversationId = :conversationId " +
+            "AND seq IS NULL " +
+            "AND sendStatus != :sentStatus"
+    )
+    suspend fun deleteUnconfirmedMessages(
+        conversationId: Int,
+        sentStatus: Int
+    )
+
     @Query("DELETE FROM local_conversation WHERE ownerUsername = :ownerUsername AND conversationId = :conversationId")
     suspend fun deleteConversation(ownerUsername: String, conversationId: Int)
 

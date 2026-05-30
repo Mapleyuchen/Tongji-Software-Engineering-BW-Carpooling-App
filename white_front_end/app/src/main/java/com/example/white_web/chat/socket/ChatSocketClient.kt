@@ -121,12 +121,19 @@ class ChatSocketClient(
         }
         target.on(EVENT_CONVERSATION_UPDATED) { args ->
             parse<ChatSocketConversationPayload>(args.firstOrNull())?.let { payload ->
-                cacheConversationEvent(payload.conversation, payload.message, refreshDetail = true)
+                if (
+                    payload.conversation.status == CONVERSATION_STATUS_CLOSED ||
+                    payload.reason == "conversation_closed"
+                ) {
+                    closeConversation(payload.conversation, payload.message)
+                } else {
+                    cacheConversationEvent(payload.conversation, payload.message, refreshDetail = true)
+                }
             }
         }
         target.on(EVENT_CONVERSATION_CLOSED) { args ->
             parse<ChatSocketClosedPayload>(args.firstOrNull())?.let { payload ->
-                cacheConversationEvent(payload.conversation, message = null, refreshDetail = true)
+                closeConversation(payload.conversation)
             }
         }
         target.on(EVENT_CONVERSATION_DELETED) { args ->
@@ -147,6 +154,20 @@ class ChatSocketClient(
     private fun cacheConversation(conversation: ChatConversationDto) {
         scope.launch {
             repository.cacheSocketConversation(conversation)
+        }
+    }
+
+    private fun closeConversation(
+        conversation: ChatConversationDto,
+        message: ChatMessageDto? = null
+    ) {
+        scope.launch {
+            if (message != null) {
+                repository.cacheSocketMessage(message, conversation)
+            } else {
+                repository.cacheSocketConversation(conversation)
+            }
+            repository.closeConversationCache(conversation.conversationId)
         }
     }
 
@@ -183,5 +204,6 @@ class ChatSocketClient(
         private const val EVENT_CONVERSATION_UPDATED = "conversation:updated"
         private const val EVENT_CONVERSATION_CLOSED = "conversation:closed"
         private const val EVENT_CONVERSATION_DELETED = "conversation:deleted"
+        private const val CONVERSATION_STATUS_CLOSED = 1
     }
 }
