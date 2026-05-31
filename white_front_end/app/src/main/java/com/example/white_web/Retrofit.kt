@@ -355,6 +355,77 @@ data class PaymentStatusData(
     val paidAt: String?
 )
 
+// 司机钱包相关数据类
+data class WalletSummaryData(
+    @SerializedName("driver_username")
+    val driverUsername: String,
+    val balance: Double,
+    @SerializedName("total_income")
+    val totalIncome: Double,
+    @SerializedName("total_withdraw")
+    val totalWithdraw: Double,
+    @SerializedName("updated_at")
+    val updatedAt: String? = null
+)
+
+data class WalletSummaryResponse(
+    val code: Int,
+    val message: String,
+    val data: WalletSummaryData?
+)
+
+// 收入 / 提现共用一份流水结构
+data class WalletTransactionData(
+    @SerializedName("transaction_id")
+    val transactionId: Int,
+    @SerializedName("driver_username")
+    val driverUsername: String,
+    @SerializedName("payment_id")
+    val paymentId: Int? = null,
+    @SerializedName("order_id")
+    val orderId: Int? = null,
+    val amount: Double,
+    // INCOME / WITHDRAW
+    val type: String,
+    // SUCCESS / PENDING / FAILED
+    val status: String,
+    val remark: String? = null,
+    @SerializedName("alipay_trade_no")
+    val alipayTradeNo: String? = null,
+    @SerializedName("created_at")
+    val createdAt: String? = null,
+    @SerializedName("updated_at")
+    val updatedAt: String? = null
+)
+
+data class WalletTransactionListData(
+    val list: List<WalletTransactionData>
+)
+
+data class WalletTransactionListResponse(
+    val code: Int,
+    val message: String,
+    val data: WalletTransactionListData?
+)
+
+// 提现请求：amount 为 null 时后端会按当前余额全部提现
+data class WalletWithdrawRequest(
+    val amount: Double? = null,
+    @SerializedName("payee_account")
+    val payeeAccount: String
+)
+
+data class WalletWithdrawData(
+    val transaction: WalletTransactionData,
+    val wallet: WalletSummaryData
+)
+
+data class WalletWithdrawResponse(
+    val code: Int,
+    val message: String,
+    val data: WalletWithdrawData?
+)
+
 interface ApiService {
     @POST("/api/login")
     suspend fun login(@Body request: LoginRequest): Response<LoginResponse>
@@ -516,6 +587,31 @@ interface ApiService {
         @Header("Authorization") token: String? = TOKEN,
         @Body request: PaymentQueryRequest
     ): Response<PaymentResponse>
+
+    // 司机钱包：余额 / 累计收入 / 累计提现
+    @GET("/api/wallet/summary")
+    suspend fun getWalletSummary(
+        @Header("Authorization") token: String? = TOKEN
+    ): Response<WalletSummaryResponse>
+
+    // 司机钱包：收入流水
+    @GET("/api/wallet/income-records")
+    suspend fun getWalletIncomeRecords(
+        @Header("Authorization") token: String? = TOKEN
+    ): Response<WalletTransactionListResponse>
+
+    // 司机钱包：提现流水
+    @GET("/api/wallet/withdraw-records")
+    suspend fun getWalletWithdrawRecords(
+        @Header("Authorization") token: String? = TOKEN
+    ): Response<WalletTransactionListResponse>
+
+    // 司机钱包：发起提现（优先支付宝沙箱转账，失败时后端回退为本地模拟提现）
+    @POST("/api/wallet/withdraw")
+    suspend fun withdrawFromWallet(
+        @Header("Authorization") token: String? = TOKEN,
+        @Body request: WalletWithdrawRequest
+    ): Response<WalletWithdrawResponse>
 }
 
 val APISERVICCE = retrofit.create(ApiService::class.java)

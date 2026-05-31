@@ -5,15 +5,18 @@ from .payment import Payment
 from .rating import DriverAverageRating, DriverRating
 from .user import User
 from .vehicle import Vehicle
+from .wallet import DriverWallet, WalletTransaction
 
 __all__ = [
     "Coupon",
     "DriverAverageRating",
     "DriverRating",
+    "DriverWallet",
     "Order",
     "OrderStatus",
     "Payment",
     "User",
     "UserCoupon",
     "Vehicle",
+    "WalletTransaction",
 ]

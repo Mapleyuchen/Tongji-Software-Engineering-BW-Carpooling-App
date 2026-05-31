@@ -27,6 +27,8 @@ from app.utils.alipay_config import (
     get_notify_url,
     get_return_url,
 )
+# 统一入账：支付成功的三个入口都调用该函数，为司机加余额、函数内部保证幂等
+from app.utils.wallet_service import mark_payment_paid_and_credit_driver
 
 payments_bp = Blueprint("payments", __name__)
 
@@ -216,9 +218,8 @@ def mock_payment(out_trade_no):
         return response
 
     if payment.status != "PAID":
-        payment.status = "PAID"
-        payment.paid_at = datetime.datetime.now()
-        db.session.commit()
+        # 同时把金额加到对应司机的钱包余额（函数内部保证只入账一次）
+        mark_payment_paid_and_credit_driver(payment)
 
     html = (
         "<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>"
@@ -343,9 +344,10 @@ def payment_query():
 
     changed = False
     if new_status == "PAID" and payment.status != "PAID":
-        payment.status = "PAID"
-        payment.alipay_trade_no = alipay_trade_no
-        payment.paid_at = datetime.datetime.now()
+        # 走统一入账函数：把 Payment 标为 PAID 的同时给司机入账，保证幂等
+        mark_payment_paid_and_credit_driver(payment, alipay_trade_no=alipay_trade_no)
+        # 入账函数内部会 commit，这里需要重新 refresh 一下当前 session 中的 payment
+        db.session.refresh(payment)
         changed = True
     elif new_status != payment.status and new_status in ("PENDING", "CLOSED"):
         payment.status = new_status
@@ -398,10 +400,8 @@ def payment_notify():
         return "success"
 
     if trade_status in ("TRADE_SUCCESS", "TRADE_FINISHED") and payment.status != "PAID":
-        payment.status = "PAID"
-        payment.alipay_trade_no = alipay_trade_no
-        payment.paid_at = datetime.datetime.now()
-        db.session.commit()
+        # 异步通知到达：调用统一入账，保证和 /query、mock-pay 三个入口共用同一份幂等逻辑
+        mark_payment_paid_and_credit_driver(payment, alipay_trade_no=alipay_trade_no)
     elif trade_status == "TRADE_CLOSED" and payment.status not in ("PAID", "CLOSED"):
         payment.status = "CLOSED"
         db.session.commit()

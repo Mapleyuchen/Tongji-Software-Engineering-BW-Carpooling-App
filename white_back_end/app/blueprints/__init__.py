@@ -7,6 +7,7 @@ from .positions import positions_bp
 from .ratings import ratings_bp
 from .users import users_bp
 from .vehicles import vehicles_bp
+from .wallet import wallet_bp
 
 
 def register_blueprints(app):
@@ -19,3 +20,4 @@ def register_blueprints(app):
     app.register_blueprint(vehicles_bp)
     app.register_blueprint(coupons_bp)
     app.register_blueprint(payments_bp)
+    app.register_blueprint(wallet_bp)
