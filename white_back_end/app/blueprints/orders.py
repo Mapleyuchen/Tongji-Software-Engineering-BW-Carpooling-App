@@ -158,6 +158,9 @@ def add_order():
 @orders_bp.route('/api/orders/<int:order_id>', methods=['GET'])
 def get_order(order_id):
     order = Order.query.get_or_404(order_id)
+    # 订单状态：0 未开始 / 1 进行中 / 2 已完成（无状态记录时按未开始处理）
+    order_status = OrderStatus.query.filter_by(order_id=order_id).first()
+    status_value = order_status.status if order_status else 0
     return jsonify({
         "code": 200,
         "message": "查询成功",
@@ -174,7 +177,8 @@ def get_order(order_id):
                 "date": order.date.isoformat(),
                 "earliest_departure_time": order.earliest_departure_time.isoformat(),
                 "latest_departure_time": order.latest_departure_time.isoformat(),
-                "remark": order.remark
+                "remark": order.remark,
+                "status": status_value
             }
     })
 
@@ -209,12 +213,30 @@ def delete_order():
 
     order = Order.query.get_or_404(order_id)
     user_info = User.query.get_or_404(current_user)
-    participant_usernames_before_leave = _order_participant_usernames(order)
+
+    # 行程一旦开始（进行中=1 / 已完成=2），任何人（司机或乘客）都不能退出拼单
+    order_status = OrderStatus.query.filter_by(order_id=order_id).first()
+    if order_status and order_status.status in (1, 2):
+        return jsonify({
+            "code": 403,
+            "message": "行程已开始，无法退出拼单"
+        }), 403
+
     if user_info.usertype == 1:
         users = [order.user1, order.user2, order.user3, order.user4]
 
         non_empty_users = [user for user in users if user is not None]
         non_empty_count = len(non_empty_users)
+        has_driver = bool(order.driver and str(order.driver).strip())
+        is_initiator = order.user1 == current_user
+        has_other_participants = non_empty_count > 1 or has_driver
+
+        # 发起者在已有其他参与者（乘客或司机）加入后，不可取消或退出拼单
+        if is_initiator and has_other_participants:
+            return jsonify({
+                "code": 403,
+                "message": "已有其他参与者加入，发起者不可取消或退出拼单"
+            }), 403
 
         # 移除当前用户
         if current_user in non_empty_users:

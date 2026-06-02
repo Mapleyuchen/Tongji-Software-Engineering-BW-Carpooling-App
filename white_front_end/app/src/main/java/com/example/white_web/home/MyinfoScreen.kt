@@ -59,6 +59,7 @@ import com.example.white_web.TOKEN
 import com.example.white_web.USERTYPE
 import com.example.white_web.UserCouponData
 import com.example.white_web.VehicleData
+import com.example.white_web.WalletSummaryData
 import com.example.white_web.ui.theme.GlowCyan10
 import com.example.white_web.ui.theme.GlowCyan30
 import com.example.white_web.ui.theme.NeonBlue
@@ -86,10 +87,12 @@ data class ProfileUiState(
     val userDetail: UserDetailResponse.Data? = null,
     val vehicles: List<VehicleData> = emptyList(),
     val coupons: List<UserCouponData> = emptyList(),
+    val walletSummary: WalletSummaryData? = null,
     val isLoading: Boolean = true,
     val profileError: String? = null,
     val vehicleError: String? = null,
-    val couponError: String? = null
+    val couponError: String? = null,
+    val walletError: String? = null
 )
 
 @Composable
@@ -130,6 +133,8 @@ fun MyInfoScreen(navController: NavHostController? = null) {
         var vehicleError: String? = null
         var coupons = emptyList<UserCouponData>()
         var couponError: String? = null
+        var walletSummary: WalletSummaryData? = null
+        var walletError: String? = null
 
         try {
             val response = APISERVICCE.getUserDetail(currentUsername)
@@ -153,6 +158,17 @@ fun MyInfoScreen(navController: NavHostController? = null) {
             } catch (e: Exception) {
                 vehicleError = "车辆信息加载失败：${e.message ?: "网络异常"}"
             }
+
+            try {
+                val response = APISERVICCE.getWalletSummary()
+                if (response.isSuccessful && response.body()?.code == 200) {
+                    walletSummary = response.body()?.data
+                } else {
+                    walletError = response.body()?.message ?: "钱包信息加载失败"
+                }
+            } catch (e: Exception) {
+                walletError = "钱包信息加载失败：${e.message ?: "网络异常"}"
+            }
         }
 
         try {
@@ -170,10 +186,12 @@ fun MyInfoScreen(navController: NavHostController? = null) {
             userDetail = profile,
             vehicles = vehicles,
             coupons = coupons,
+            walletSummary = walletSummary,
             isLoading = false,
             profileError = profileError,
             vehicleError = vehicleError,
-            couponError = couponError
+            couponError = couponError,
+            walletError = walletError
         )
     }
 
@@ -201,7 +219,8 @@ fun MyInfoScreen(navController: NavHostController? = null) {
                     userType = currentUserType,
                     state = uiState,
                     onTripHistoryClick = { navController?.navigate("tripHistory") },
-                    onVehicleManageClick = { navController?.navigate("vehicleManagement") }
+                    onVehicleManageClick = { navController?.navigate("vehicleManagement") },
+                    onWalletClick = { navController?.navigate("wallet") }
                 )
             }
 
@@ -269,7 +288,8 @@ private fun ProfileContent(
     userType: Int,
     state: ProfileUiState,
     onTripHistoryClick: () -> Unit = {},
-    onVehicleManageClick: () -> Unit = {}
+    onVehicleManageClick: () -> Unit = {},
+    onWalletClick: () -> Unit = {}
 ) {
     LazyColumn(
         modifier = modifier
@@ -284,6 +304,24 @@ private fun ProfileContent(
                 roleName = state.userDetail?.usertype ?: roleName(userType),
                 error = state.profileError
             )
+        }
+
+        if (userType == 2) {
+            item {
+                SectionHeader(
+                    title = "我的钱包",
+                    subtitle = "查看收入与提现",
+                    icon = Icons.Default.ShoppingCart,
+                    tint = NeonGreen
+                )
+            }
+            item {
+                DriverWalletCard(
+                    summary = state.walletSummary,
+                    error = state.walletError,
+                    onClick = onWalletClick
+                )
+            }
         }
 
         item {
@@ -368,6 +406,86 @@ private fun ProfileActions(
                     color = NeonPurple,
                     onClick = onVehicleManageClick
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DriverWalletCard(
+    summary: WalletSummaryData?,
+    error: String?,
+    onClick: () -> Unit
+) {
+    ProfileSurface {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Brush.linearGradient(listOf(NeonCyan, NeonBlue))),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.ShoppingCart,
+                        contentDescription = null,
+                        tint = Color.White
+                    )
+                }
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Text(
+                        text = "当前余额",
+                        color = Color(0xFF8B6A50),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        text = "¥ ${formatAmount(summary?.balance ?: 0.0)}",
+                        color = StarWhite,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                ProfileChip(
+                    icon = Icons.Default.Star,
+                    text = "累计收入 ¥${formatAmount(summary?.totalIncome ?: 0.0)}",
+                    tint = NeonGreen
+                )
+                ProfileChip(
+                    icon = Icons.Default.DateRange,
+                    text = "累计提现 ¥${formatAmount(summary?.totalWithdraw ?: 0.0)}",
+                    tint = NeonPurple
+                )
+            }
+
+            Button(
+                onClick = onClick,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = NeonCyan.copy(alpha = 0.16f),
+                    contentColor = NeonCyan
+                )
+            ) {
+                Text(
+                    text = "查看钱包详情",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                )
+            }
+
+            if (error != null) {
+                EmptyState(text = error)
             }
         }
     }

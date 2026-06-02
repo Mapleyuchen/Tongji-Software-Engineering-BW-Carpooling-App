@@ -6,6 +6,7 @@ from .payment import Payment
 from .rating import DriverAverageRating, DriverRating
 from .user import User
 from .vehicle import Vehicle
+from .wallet import DriverWallet, WalletTransaction
 
 __all__ = [
     "Conversation",
@@ -13,11 +14,12 @@ __all__ = [
     "Coupon",
     "DriverAverageRating",
     "DriverRating",
-    "Message",
+    "DriverWallet",
     "Order",
     "OrderStatus",
     "Payment",
     "User",
     "UserCoupon",
     "Vehicle",
+    "WalletTransaction",
 ]

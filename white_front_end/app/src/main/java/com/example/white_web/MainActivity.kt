@@ -24,6 +24,7 @@ import com.example.white_web.home.HomePage
 import com.example.white_web.home.MyInfoScreen
 import com.example.white_web.home.TripHistoryScreen
 import com.example.white_web.home.VehicleManagementScreen
+import com.example.white_web.home.WalletScreen
 import com.example.white_web.ui.theme.White_webTheme
 
 
@@ -94,16 +95,8 @@ fun AppNavigation() {
         composable("vehicleManagement") {
             VehicleManagementScreen(mainNavController)
         }
-        composable("chatList") {
-            ChatListScreen(mainNavController)
-        }
-        composable("chat/{conversationId}") { backStackEntry ->
-            val conversationId = backStackEntry.arguments
-                ?.getString("conversationId")
-                ?.toIntOrNull()
-            if (conversationId != null) {
-                ChatMessageScreen(mainNavController, conversationId)
-            }
+        composable("wallet") {
+            WalletScreen(mainNavController)
         }
     }
 }
