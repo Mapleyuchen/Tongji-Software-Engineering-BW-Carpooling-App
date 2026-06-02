@@ -123,7 +123,9 @@ data class DetailData(
     val date: String,
     val earliest_departure_time: String,
     val latest_departure_time: String,
-    val remark: String
+    val remark: String,
+    // 订单状态：0 未开始 / 1 进行中 / 2 已完成
+    val status: Int = 0
 )
 
 data class JoinLeaveRequest(
@@ -239,6 +241,12 @@ fun DisplayDetail(detailData: DetailData, navController: NavHostController, phon
         detailData.user3?.takeIf { it.isNotBlank() },
         detailData.user4?.takeIf { it.isNotBlank() }).size
 
+    val hasDriver = !detailData.driver.isNullOrBlank()
+    val hasOtherParticipants = userCount > 1 || hasDriver
+    val isInitiator = detailData.user1 == USERNAME
+    // 行程已开始（进行中=1 / 已完成=2）后，任何人都不能退出拼单
+    val tripStarted = detailData.status >= 1
+
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -248,9 +256,23 @@ fun DisplayDetail(detailData: DetailData, navController: NavHostController, phon
 
     if (USERTYPE == 1) {
         if (listOf(detailData.user1, detailData.user2, detailData.user3, detailData.user4).contains(USERNAME)) {
-            buttonColor = NeonRed
-            buttonText = if (userCount == 1) "移除拼单" else "退出拼单"
-            isClickable = true
+            if (tripStarted) {
+                buttonColor = Color(0xFF607D8B)
+                buttonText = "行程已开始，无法退出拼单"
+                isClickable = false
+            } else if (isInitiator && hasOtherParticipants) {
+                buttonColor = Color(0xFF607D8B)
+                buttonText = "已有参与者，无法移除拼单"
+                isClickable = false
+            } else if (isInitiator) {
+                buttonColor = NeonRed
+                buttonText = "移除拼单"
+                isClickable = true
+            } else {
+                buttonColor = NeonRed
+                buttonText = "退出拼单"
+                isClickable = true
+            }
         } else if (userCount == 4) {
             buttonColor = Color(0xFF607D8B)
             buttonText = "人数已满"
@@ -266,9 +288,15 @@ fun DisplayDetail(detailData: DetailData, navController: NavHostController, phon
             buttonText = "接受拼单"
             isClickable = true
         } else if (detailData.driver == USERNAME) {
-            buttonColor = NeonRed
-            buttonText = "放弃接受"
-            isClickable = true
+            if (tripStarted) {
+                buttonColor = Color(0xFF607D8B)
+                buttonText = "行程已开始，无法退出拼单"
+                isClickable = false
+            } else {
+                buttonColor = NeonRed
+                buttonText = "放弃接受"
+                isClickable = true
+            }
         } else {
             buttonColor = Color(0xFF607D8B)
             buttonText = "已有司机"

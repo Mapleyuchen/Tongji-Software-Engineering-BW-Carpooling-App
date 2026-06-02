@@ -22,6 +22,7 @@ import com.example.white_web.home.HomePage
 import com.example.white_web.home.MyInfoScreen
 import com.example.white_web.home.TripHistoryScreen
 import com.example.white_web.home.VehicleManagementScreen
+import com.example.white_web.home.WalletScreen
 import com.example.white_web.ui.theme.White_webTheme
 
 
@@ -91,6 +92,9 @@ fun AppNavigation() {
         }
         composable("vehicleManagement") {
             VehicleManagementScreen(mainNavController)
+        }
+        composable("wallet") {
+            WalletScreen(mainNavController)
         }
     }
 }
