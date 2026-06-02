@@ -6,6 +6,7 @@ from flask import Blueprint, jsonify, request
 from app.extensions import db
 from app.models import (
     Coupon,
+    Conversation,
     DriverAverageRating,
     DriverRating,
     Order,
@@ -14,6 +15,9 @@ from app.models import (
     UserCoupon,
     Vehicle,
 )
+from app.utils.chat import schedule_conversation_close
+from app.utils.chat_events import emit_conversation_updated, emit_message_new
+from app.utils.celery import send_celery_task
 from app.utils.auth import check_token, generate_token
 
 
@@ -77,7 +81,11 @@ def confirm_arrival():
 
     # 订单状态保持为0（未开始），直到司机主动点击"开始行程"
 
+    conversation = Conversation.query.filter_by(order_id=order.order_id).first()
+
     db.session.commit()
+    if conversation:
+        emit_conversation_updated(conversation, reason="arrival_updated")
 
     return jsonify(
         {
@@ -149,8 +157,11 @@ def start_trip():
 
     # 更新订单状态为进行中
     order_status.status = 1  # 进行中
+    conversation = Conversation.query.filter_by(order_id=order.order_id).first()
 
     db.session.commit()
+    if conversation:
+        emit_conversation_updated(conversation, reason="order_started")
 
     return jsonify({"code": 200, "message": "行程开始成功", "data": {"status": order_status.status}})
 
@@ -191,16 +202,28 @@ def confirm_destination():
             return jsonify({"code": 404, "message": "订单状态不存在"}), 404
 
         # 只有在进行中状态才能确认到达目的地
+        conversation = None
+        system_message = None
         if order_status.status == 1:
             # 设置为"已完成"
             order_status.status = 2  # 已完成
             # 设置完成时间为当前时间
             order_status.completed_at = datetime.datetime.now()
+            conversation, system_message = schedule_conversation_close(order.order_id, order_status.completed_at)
             message = "确认到达目的地成功"
         else:
             message = "状态更新失败，订单状态异常"
 
         db.session.commit()
+        if conversation:
+            send_celery_task(
+                "chat.close_conversation",
+                args=[conversation.conversation_id],
+                eta=conversation.close_at,
+            )
+            if system_message:
+                emit_message_new(system_message, conversation)
+            emit_conversation_updated(conversation, reason="order_completed", message=system_message)
 
         return jsonify({"code": 200, "message": message, "data": {"status": order_status.status, "completed_at": order_status.completed_at.isoformat() if order_status.completed_at else None}})
 

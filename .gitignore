@@ -50,3 +50,7 @@ local.properties
 **/.externalNativeBuild/
 .cxx/
 **/.cxx/
+
+# Celery beat local schedule database
+celerybeat-schedule*
+celerybeat.pid

@@ -10,14 +10,60 @@ from app.models import (
     DriverRating,
     Order,
     OrderStatus,
+    Conversation,
     User,
     UserCoupon,
     Vehicle,
+)
+from app.utils.chat import (
+    ROLE_DRIVER,
+    ROLE_PASSENGER,
+    add_member_to_order_conversation,
+    append_system_message_for_order,
+    create_conversation_for_new_order,
+    has_any_participant,
+    remove_member_from_order_conversation,
+)
+from app.utils.chat_events import (
+    emit_conversation_deleted,
+    emit_conversation_updated,
+    emit_member_changed,
+    emit_message_new,
 )
 from app.utils.auth import check_token, generate_token
 
 
 orders_bp = Blueprint("orders", __name__)
+
+
+def _conversation_for_message(message):
+    if not message:
+        return None
+    return Conversation.query.get(message.conversation_id)
+
+
+def _emit_order_chat_message(message, reason=None):
+    conversation = _conversation_for_message(message)
+    if not conversation:
+        return
+    emit_message_new(message, conversation)
+    emit_conversation_updated(conversation, reason=reason, message=message)
+
+
+def _order_participant_usernames(order):
+    return list(
+        dict.fromkeys(
+            username
+            for username in [
+                order.user1,
+                order.user2,
+                order.user3,
+                order.user4,
+                order.driver,
+            ]
+            if username
+        )
+    )
 
 
 @orders_bp.route('/api/orders', methods=['GET'])
@@ -85,7 +131,12 @@ def add_order():
         remark=data['remark']
     )
     db.session.add(new_order)
+    db.session.flush()
+
+    db.session.add(OrderStatus(order_id=new_order.order_id))
+    create_conversation_for_new_order(new_order, current_user)
     db.session.commit()
+
     data = {
             "order_id": new_order.order_id,
             "departure": new_order.departure,
@@ -208,10 +259,13 @@ def delete_order():
                 users[3] if len(users) > 3 else None
             )
 
-            db.session.commit()
+            system_message = append_system_message_for_order(order.order_id, f"{current_user}已退出拼车")
+            remove_member_from_order_conversation(order.order_id, current_user)
 
             # 检查是否所有用户都离开了
             if len(users) == 0:
+                conversation_id = system_message.conversation_id if system_message else None
+                deleted_order_id = order.order_id
                 # 先删除与该订单关联的所有评分记录
                 DriverRating.query.filter_by(order_id=order.order_id).delete()
                 
@@ -221,6 +275,31 @@ def delete_order():
                 # 然后删除订单本身
                 db.session.delete(order)
                 db.session.commit()
+                if conversation_id:
+                    emit_conversation_deleted(
+                        conversation_id,
+                        deleted_order_id,
+                        usernames=participant_usernames_before_leave,
+                    )
+            else:
+                db.session.commit()
+                conversation = _conversation_for_message(system_message)
+                if conversation:
+                    emit_conversation_deleted(
+                        conversation.conversation_id,
+                        order.order_id,
+                        usernames=[current_user],
+                        include_conversation_room=False,
+                    )
+                    emit_message_new(system_message, conversation)
+                    emit_member_changed(
+                        conversation,
+                        username=current_user,
+                        action="left",
+                        role=ROLE_PASSENGER,
+                        message=system_message,
+                    )
+                    emit_conversation_updated(conversation, reason="member_left", message=system_message)
 
             return jsonify({
                 "code": 200,
@@ -235,7 +314,42 @@ def delete_order():
     elif user_info.usertype == 2:
         if order.driver == current_user:
             order.driver = None
+            system_message = append_system_message_for_order(order.order_id, f"司机{current_user}已退出拼车")
+            remove_member_from_order_conversation(order.order_id, current_user)
+            if not has_any_participant(order):
+                conversation_id = system_message.conversation_id if system_message else None
+                deleted_order_id = order.order_id
+                DriverRating.query.filter_by(order_id=order.order_id).delete()
+                OrderStatus.query.filter_by(order_id=order.order_id).delete()
+                db.session.delete(order)
+            else:
+                conversation_id = None
+                deleted_order_id = None
             db.session.commit()
+            if conversation_id:
+                emit_conversation_deleted(
+                    conversation_id,
+                    deleted_order_id,
+                    usernames=participant_usernames_before_leave,
+                )
+            else:
+                conversation = _conversation_for_message(system_message)
+                if conversation:
+                    emit_conversation_deleted(
+                        conversation.conversation_id,
+                        order.order_id,
+                        usernames=[current_user],
+                        include_conversation_room=False,
+                    )
+                    emit_message_new(system_message, conversation)
+                    emit_member_changed(
+                        conversation,
+                        username=current_user,
+                        action="driver_left",
+                        role=ROLE_DRIVER,
+                        message=system_message,
+                    )
+                    emit_conversation_updated(conversation, reason="driver_left", message=system_message)
             return jsonify({
                 "code": 200,
                 "message": "离开订单成功"
@@ -285,6 +399,11 @@ def join_order():
     if user_info.usertype == 1:  # 一般用户
         users = [order.user1, order.user2, order.user3, order.user4]
         non_empty_users = [user for user in users if user is not None]
+        if current_user in non_empty_users:
+            return jsonify({
+                "code": 409,
+                "message": "用户已在订单中"
+            }), 409
         if len(non_empty_users) >= 4:
             return jsonify({
                 "code": 422,
@@ -300,7 +419,20 @@ def join_order():
         elif order.user4 is None:
             order.user4 = current_user
 
+        add_member_to_order_conversation(order, current_user, ROLE_PASSENGER)
+        system_message = append_system_message_for_order(order.order_id, f"{current_user}已加入拼车")
         db.session.commit()
+        conversation = _conversation_for_message(system_message)
+        if conversation:
+            emit_message_new(system_message, conversation)
+            emit_member_changed(
+                conversation,
+                username=current_user,
+                action="joined",
+                role=ROLE_PASSENGER,
+                message=system_message,
+            )
+            emit_conversation_updated(conversation, reason="member_joined", message=system_message)
 
         return jsonify({
             "code": 200,
@@ -310,7 +442,20 @@ def join_order():
     elif user_info.usertype == 2:  # 司机
         if order.driver is None:
             order.driver = current_user
+            add_member_to_order_conversation(order, current_user, ROLE_DRIVER)
+            system_message = append_system_message_for_order(order.order_id, f"司机{current_user}已接单")
             db.session.commit()
+            conversation = _conversation_for_message(system_message)
+            if conversation:
+                emit_message_new(system_message, conversation)
+                emit_member_changed(
+                    conversation,
+                    username=current_user,
+                    action="driver_joined",
+                    role=ROLE_DRIVER,
+                    message=system_message,
+                )
+                emit_conversation_updated(conversation, reason="driver_joined", message=system_message)
             return jsonify({
                 "code": 200,
                 "message": "加入订单成功"

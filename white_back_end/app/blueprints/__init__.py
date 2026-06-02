@@ -1,4 +1,5 @@
 from .auth import auth_bp
+from .conversations import conversations_bp
 from .coupons import coupons_bp
 from .order_status import order_status_bp
 from .orders import orders_bp

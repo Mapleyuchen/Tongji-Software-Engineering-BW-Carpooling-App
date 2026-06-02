@@ -1,0 +1,9 @@
+celery
+Flask
+Flask-SQLAlchemy
+Flask-SocketIO
+PyJWT
+PyMySQL
+redis
+simple-websocket
+Werkzeug
