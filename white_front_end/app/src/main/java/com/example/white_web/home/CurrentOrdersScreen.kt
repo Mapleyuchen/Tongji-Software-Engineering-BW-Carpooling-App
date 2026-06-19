@@ -52,7 +52,7 @@
 package com.example.white_web.home
 
 // 导入Compose和相关依赖
-import PosDetail
+import com.example.white_web.PosDetail
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
@@ -535,15 +535,19 @@ class CurrentOrdersViewModel : ViewModel() {
     }
 
     // 开始行程
-    fun startTrip(orderId: Int) {
+    fun startTrip(orderId: Int, onSuccess: () -> Unit = {}) {
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
             try {
                 val response = APISERVICCE.startTrip(request = OrderIdRequest(orderId))
                 if (response.isSuccessful && response.body()?.code == 200) {
-                    // 开始行程成功后刷新订单状态
-                    fetchCurrentOrder()
+                    _currentOrder.value = _currentOrder.value?.let { current ->
+                        current.copy(status = current.status.copy(status = 1))
+                    }
+                    _notice.value = "行程已开始，正在进入导航"
+                    refreshCurrentOrderSilently()
+                    onSuccess()
                 } else {
                     _error.value = response.apiMessageOr("开始行程失败")
                 }
@@ -786,6 +790,7 @@ fun CurrentOrdersScreen(navController: NavHostController, viewModel: CurrentOrde
                     currentOrder = currentOrder!!,
                     currentUsername = currentUsername,
                     viewModel = viewModel,
+                    navController = navController,
                     isConfirmingArrival = isConfirmingArrival
                 )
             }
@@ -816,6 +821,7 @@ fun OrderDetailContent(
     currentOrder: CurrentOrderData,
     currentUsername: String,
     viewModel: CurrentOrdersViewModel,
+    navController: NavHostController,
     isConfirmingArrival: Boolean = false
 ) {
     // 解析日期和时间
@@ -845,13 +851,21 @@ fun OrderDetailContent(
         "${earliestTime.format(timeFormatter)}-${latestTime.format(timeFormatter)}"
 
 
-    // 地图函数计算的距离
-    var distance by remember { mutableStateOf<Float>(0f) }
+    // 地图路线回调前不要显示 0 米，避免把“尚未计算”当成真实距离参与计费。
+    var distance by remember(
+        currentOrder.order.orderId,
+        currentOrder.start.name,
+        currentOrder.end.name
+    ) { mutableStateOf<Float?>(null) }
 
     // 计算距离和价格 - 使用工具类
-    val distanceInMeters = distance.toString()
-    val formattedDistance = PriceUtils.formatDistanceDisplay(distanceInMeters)
-    val calculatedPrice = PriceUtils.calculateExpectedPrice(distanceInMeters)
+    val distanceInMeters = distance?.takeIf { it > 0f }?.toString()
+    val formattedDistance = distanceInMeters
+        ?.let { PriceUtils.formatDistanceDisplay(it) }
+        ?: "距离计算中..."
+    val calculatedPrice = distanceInMeters
+        ?.let { PriceUtils.calculateExpectedPrice(it) }
+        ?: "价格计算中..."
 
     // 计算参与人数
     val participants = listOfNotNull(
@@ -997,7 +1011,9 @@ fun OrderDetailContent(
                     start = currentOrder.start,
                     end = currentOrder.end,
                     onDistanceCalculated = { d ->
-                        distance = d
+                        if (d > 0f) {
+                            distance = d
+                        }
                     })
             }
 
@@ -1152,7 +1168,11 @@ fun OrderDetailContent(
                         isDriver
                     )
                 },
-                onStartTrip = { viewModel.startTrip(currentOrder.order.orderId) },
+                onStartTrip = {
+                    viewModel.startTrip(currentOrder.order.orderId) {
+                        navController.navigate("navigation/${currentOrder.order.orderId}")
+                    }
+                },
                 allPassengersArrived = allPassengersArrived,
                 hasPaid = hasPaid,
                 paying = paying,
@@ -1782,7 +1802,8 @@ fun OrderDetailContentPreview() {
         OrderDetailContent(
             currentOrder = mockCurrentOrder,
             currentUsername = "passenger1",
-            viewModel = CurrentOrdersViewModel()
+            viewModel = CurrentOrdersViewModel(),
+            navController = NavHostController(LocalContext.current)
         )
     }
 }

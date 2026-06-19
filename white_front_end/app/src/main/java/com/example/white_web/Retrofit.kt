@@ -1,12 +1,5 @@
 package com.example.white_web
 
-import DetailResponse
-import GetPosResponse
-import JoinLeaveRedponse
-import JoinLeaveRequest
-import PublishRequest
-import PublishResponse
-import UserDetailResponse
 import com.example.white_web.home.AllOrdersResponse
 import com.example.white_web.home.BaseResponse
 import com.example.white_web.home.ConfirmArrivalResponse

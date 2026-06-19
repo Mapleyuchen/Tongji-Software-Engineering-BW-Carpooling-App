@@ -40,7 +40,7 @@
  */
 package com.example.white_web.home
 
-import PosDetail
+import com.example.white_web.PosDetail
 import android.content.Context
 import android.annotation.SuppressLint
 import android.widget.Toast

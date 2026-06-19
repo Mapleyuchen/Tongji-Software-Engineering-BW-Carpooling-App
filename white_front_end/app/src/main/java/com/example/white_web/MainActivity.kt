@@ -1,7 +1,5 @@
 package com.example.white_web
 
-import DetailScreen
-import PublishScreen
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -20,6 +18,7 @@ import com.example.white_web.chat.ChatListScreen
 import com.example.white_web.chat.ChatMessageScreen
 import com.example.white_web.home.CurrentOrdersScreen
 import com.example.white_web.home.CurrentOrdersViewModel
+import com.example.white_web.home.DriverNavigationScreen
 import com.example.white_web.home.HomePage
 import com.example.white_web.home.MyInfoScreen
 import com.example.white_web.home.TripHistoryScreen
@@ -86,6 +85,14 @@ fun AppNavigation() {
             val viewModel = viewModel<CurrentOrdersViewModel>()
             CurrentOrdersScreen(mainNavController, viewModel)
         }
+        composable("navigation/{orderId}") { backStackEntry ->
+            val orderId = backStackEntry.arguments?.getString("orderId")?.toIntOrNull()
+            if (orderId != null) {
+                DriverNavigationScreen(mainNavController, orderId)
+            } else {
+                mainNavController.popBackStack()
+            }
+        }
         composable("myInfo") {
             MyInfoScreen(mainNavController)
         }
@@ -97,6 +104,19 @@ fun AppNavigation() {
         }
         composable("wallet") {
             WalletScreen(mainNavController)
+        }
+        composable("chatList") {
+            ChatListScreen(mainNavController)
+        }
+        composable("chat/{conversationId}") { backStackEntry ->
+            val conversationId = backStackEntry.arguments
+                ?.getString("conversationId")
+                ?.toIntOrNull()
+            if (conversationId != null) {
+                ChatMessageScreen(mainNavController, conversationId)
+            } else {
+                mainNavController.popBackStack()
+            }
         }
     }
 }

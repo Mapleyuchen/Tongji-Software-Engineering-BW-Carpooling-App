@@ -213,6 +213,7 @@ def delete_order():
 
     order = Order.query.get_or_404(order_id)
     user_info = User.query.get_or_404(current_user)
+    participant_usernames_before_leave = _order_participant_usernames(order)
 
     # 行程一旦开始（进行中=1 / 已完成=2），任何人（司机或乘客）都不能退出拼单
     order_status = OrderStatus.query.filter_by(order_id=order_id).first()

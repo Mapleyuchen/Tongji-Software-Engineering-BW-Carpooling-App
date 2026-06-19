@@ -15,6 +15,7 @@ def register_blueprints(app):
     app.register_blueprint(auth_bp)
     app.register_blueprint(users_bp)
     app.register_blueprint(orders_bp)
+    app.register_blueprint(conversations_bp)
     app.register_blueprint(positions_bp)
     app.register_blueprint(order_status_bp)
     app.register_blueprint(ratings_bp)

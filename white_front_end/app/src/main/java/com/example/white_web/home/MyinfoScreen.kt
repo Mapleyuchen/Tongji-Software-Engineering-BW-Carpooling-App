@@ -1,6 +1,6 @@
 package com.example.white_web.home
 
-import UserDetailResponse
+import com.example.white_web.UserDetailResponse
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border

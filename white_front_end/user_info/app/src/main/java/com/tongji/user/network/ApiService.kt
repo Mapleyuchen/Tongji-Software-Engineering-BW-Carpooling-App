@@ -1,8 +1,9 @@
 package com.tongji.user.network
 import retrofit2.Response
 import retrofit2.http.GET
+import retrofit2.http.Path
 
 interface ApiService {
-    @GET("api/user/<str:username>") // 替换为您的实际API端点
-    suspend fun getUserInfo(): Response<UserInfo>
+    @GET("api/user/{username}")
+    suspend fun getUserInfo(@Path("username") username: String): Response<UserInfo>
 }

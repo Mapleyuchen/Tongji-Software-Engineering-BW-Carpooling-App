@@ -1,8 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.compose)
-    id("org.jetbrains.kotlin.kapt")
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -17,6 +16,15 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "android"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
@@ -37,6 +45,9 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+    composeOptions {
+        kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()
     }
 }
 
@@ -63,7 +74,7 @@ dependencies {
     implementation(libs.navigation.compose)
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
-    kapt(libs.room.compiler)
+    ksp(libs.room.compiler)
     implementation(libs.socket.io.client)
     // 高德地图SDK
     implementation(libs.search) // 搜索功能

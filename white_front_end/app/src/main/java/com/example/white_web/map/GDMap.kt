@@ -30,7 +30,7 @@
  */
 package com.example.white_web.map
 
-import PosDetail
+import com.example.white_web.PosDetail
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -387,25 +387,32 @@ fun GDMapPath(
     val context = LocalContext.current
     val mapView = remember { MapView(context) }
 
-    LaunchedEffect(Unit) {
-        // 规划路线
+    LaunchedEffect(start.name, start.lon, start.lat, end.name, end.lon, end.lat) {
+        // 规划路线。失败时回退到经纬度估算距离，避免当前订单页显示 0 米/8 元。
         try {
-            val routeSearch = RouteSearch(context)
+            mapView.map.clear()
+            val routeSearch = RouteSearch(context.applicationContext)
             routeSearch.setRouteSearchListener(object : RouteSearch.OnRouteSearchListener {
                 override fun onDriveRouteSearched(result: DriveRouteResult?, errorCode: Int) {
                     if (errorCode == AMapException.CODE_AMAP_SUCCESS) {
                         // 获取路径
                         val path = result?.paths?.firstOrNull()
-                        path?.let {
+                        if (path != null) {
                             drawRoute(path, mapView)
                             // 获取路线距离
-                            val distance = it.distance
+                            val distance = path.distance.takeIf { it > 0f }
+                                ?: estimateDrivingDistanceMeters(start, end)
                             Log.d("Route", "Distance: $distance meters")
                             // 回传
                             onDistanceCalculated(distance)
+                        } else {
+                            val fallbackDistance = estimateDrivingDistanceMeters(start, end)
+                            Log.e("Route", "Route path is empty, fallback distance: $fallbackDistance meters")
+                            onDistanceCalculated(fallbackDistance)
                         }
                     } else {
                         Log.e("Route", "Error Code: $errorCode")
+                        onDistanceCalculated(estimateDrivingDistanceMeters(start, end))
                     }
                 }
 
@@ -429,16 +436,17 @@ fun GDMapPath(
             })
 
             // 构建起点终点信息
-            val start = RouteSearch.FromAndTo(
+            val fromAndTo = RouteSearch.FromAndTo(
                 LatLonPoint(start.lat, start.lon),
                 LatLonPoint(end.lat, end.lon)
             )
             val query =
-                RouteSearch.DriveRouteQuery(start, RouteSearch.DRIVING_NORMAL_CAR, null, null, "")
+                RouteSearch.DriveRouteQuery(fromAndTo, RouteSearch.DRIVING_NORMAL_CAR, null, null, "")
             routeSearch.calculateDriveRouteAsyn(query)
 
         } catch (e: Exception) {
             Log.e("ERROR", e.message, e)
+            onDistanceCalculated(estimateDrivingDistanceMeters(start, end))
         }
 
     }

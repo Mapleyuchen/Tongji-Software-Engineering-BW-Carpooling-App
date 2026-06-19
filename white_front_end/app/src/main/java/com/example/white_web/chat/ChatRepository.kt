@@ -72,6 +72,9 @@ class ChatRepository(
     suspend fun refreshCurrentConversation(): LocalConversationEntity? {
         val response = api.getCurrentChatConversation(tokenProvider())
         val body = response.body()
+        if (response.code() == 404) {
+            return null
+        }
         if (!response.isSuccessful || body?.code != 200) {
             throw IllegalStateException(body?.message ?: "获取当前聊天失败")
         }

@@ -36,6 +36,8 @@
  * - Toast消息提示
  */
 
+package com.example.white_web
+
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -89,10 +91,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
-import com.example.white_web.APISERVICCE
-import com.example.white_web.R
-import com.example.white_web.USERNAME
-import com.example.white_web.USERTYPE
 import com.example.white_web.ui.theme.DeepSpace
 import com.example.white_web.ui.theme.GlowCyan30
 import com.example.white_web.ui.theme.NeonBlue

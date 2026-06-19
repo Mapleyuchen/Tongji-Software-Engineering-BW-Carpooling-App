@@ -32,6 +32,8 @@
  */
 package com.example.white_web.home
 
+import kotlin.math.roundToInt
+
 /**
  * 价格计算相关的工具类
  */
@@ -45,6 +47,7 @@ object PriceUtils {
     fun calculateExpectedPrice(distanceInMeters: String): String {
         return try {
             val distance = distanceInMeters.toDoubleOrNull() ?: return "价格计算中..."
+            if (distance <= 0.0) return "价格计算中..."
             val distanceInKm = distance / 1000.0
 
             // 价格计算规则：
@@ -63,7 +66,7 @@ object PriceUtils {
             }
 
             // 限制价格范围并四舍五入到整数
-            val finalPrice = totalPrice.coerceIn(8.0, 1000.0).toInt()
+            val finalPrice = totalPrice.coerceIn(8.0, 1000.0).roundToInt()
             "${finalPrice}元"
 
         } catch (e: Exception) {
@@ -79,6 +82,7 @@ object PriceUtils {
     fun formatDistanceDisplay(distanceInMeters: String): String {
         return try {
             val distance = distanceInMeters.toDoubleOrNull() ?: return "需要从高德API获取距离"
+            if (distance <= 0.0) return "距离计算中..."
             val distanceInKm = distance / 1000.0
             if (distanceInKm < 1.0) {
                 "${distance.toInt()}米"

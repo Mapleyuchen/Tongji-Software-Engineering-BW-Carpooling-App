@@ -31,6 +31,8 @@
  * - 发布成功自动跳转
  */
 
+package com.example.white_web
+
 import android.widget.Toast
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDefaults
@@ -99,9 +101,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
-import com.example.white_web.APISERVICCE
-import com.example.white_web.R
-import com.example.white_web.USERTYPE
 import com.example.white_web.ui.theme.DeepSpace
 import com.example.white_web.ui.theme.GlowCyan30
 import com.example.white_web.ui.theme.NeonBlue
